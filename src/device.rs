@@ -1,7 +1,9 @@
-use std::{io, net::{TcpListener, TcpStream}};
+use std::{io::{self, Read}, net::{TcpListener, TcpStream}};
+use postcard;
+use serde;
 use crate::config::{ip_to_id, BoardId};
 
-pub(crate) fn listen(listener: &TcpListener) -> io::Result<Vec<(BoardId, TcpStream)>> {
+pub(crate) fn listen(listener: &TcpListener) -> Vec<(BoardId, TcpStream)> {
     let mut reaped = Vec::new();
     
     loop {
@@ -17,16 +19,19 @@ pub(crate) fn listen(listener: &TcpListener) -> io::Result<Vec<(BoardId, TcpStre
 
                 reaped.push((ip, stream));
             }
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(reaped),
-            // TODO: Make this return all the values that it obtained correctly?
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return reaped,
             Err(e) => {
                 eprintln!("Error when accepting new device connection from listener: {e:?}");
-                return Err(e);
+                return reaped;
             }
         };
     };
 }
 
-pub(crate) fn pull() {
+// protocol is to send the number of bytes to read in big endian
+pub(crate) fn pull<'a, T, U>(devices: T) -> ()
+where 
+    T: Iterator<Item = &'a mut TcpStream>,
+{
     todo!()
 }

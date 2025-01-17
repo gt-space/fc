@@ -1,9 +1,9 @@
 use std::{fmt, net::IpAddr};
 
 pub type BoardId = &'static str;
+pub enum Telemetry {}
 
-
-// TODO defininetly a better way to do this
+// TODO definetly a better way to do this
 pub fn ip_to_id(ip: IpAddr) -> Result<BoardId, ConversionError> {
     let ip = match ip {
         IpAddr::V4(a) => a.octets(),
