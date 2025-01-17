@@ -5,5 +5,5 @@ struct Data;
 //       the common refactor?
 /// Updates the vehicle state with the new data recieved from devices
 pub(super) fn ingest(state: &mut VehicleState, data: Vec<Data>) {
-  panic!("state::ingest: Not Implemented!");
+  todo!()
 }
