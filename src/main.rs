@@ -24,7 +24,7 @@ fn main() {
 
     let mut servo_stream = servo::establish(SERVO_ADDRESS, 3, Duration::from_secs(2)).expect("Could't set up initial servo connection");
     loop {
-        // SERVO SECTION (logic that interacts with servo)
+        // servo (logic that interacts with servo)
         if let Some(message) = servo::pull(&mut servo_stream) {
             servo::decode(message);
         }
@@ -33,7 +33,7 @@ fn main() {
 
         // boards (logic that interacts with SAM, AHRS, BMS, etc.)
 
-        // sequences and triggers (logic )
+        // sequences and triggers
 
         // triggers
 
