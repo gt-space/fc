@@ -1,7 +1,14 @@
 use std::{fmt, net::IpAddr};
 
 pub type BoardId = &'static str;
-pub enum Telemetry {}
+
+
+#[derive(Debug)]
+pub enum ConversionError {
+    Ipv6Found,
+    BoardIdNotFound {ip: [u8; 4]},
+}
+
 
 // TODO definetly a better way to do this
 pub fn ip_to_id(ip: IpAddr) -> Result<BoardId, ConversionError> {
@@ -11,17 +18,17 @@ pub fn ip_to_id(ip: IpAddr) -> Result<BoardId, ConversionError> {
     };
 
     match ip {
-        [1, 2, 3, 4] => Ok("flight-01"),
+        [192, 168, 1, 10] => Ok("servo-01"),
+        [192, 168, 1, 11] => Ok("flight-01"),
+        [192, 158, 1, 130] => Ok("ahrs-01"),
+        [192, 168, 1, 131] => Ok("bms-01"),
+        [192, 168, 1, 101] => Ok("sam-01"),
+        [192, 168, 1, 102] => Ok("sam-02"),
+        [192, 168, 1, 103] => Ok("sam-03"),
+        [192, 168, 1, 104] => Ok("sam-04"),
+        [192, 168, 1, 105] => Ok("sam-05"),
         _ => Err(ConversionError::BoardIdNotFound { ip }),
     }
-}
-
-
-
-#[derive(Debug, Clone)]
-pub enum ConversionError {
-    Ipv6Found,
-    BoardIdNotFound {ip: [u8; 4]},
 }
 
 impl fmt::Display for ConversionError {

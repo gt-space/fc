@@ -1,9 +1,6 @@
-use common::comm::VehicleState;
+use common::comm::{flight::DataMessage, VehicleState};
 
-struct Data;
-// TODO: Maybe we could make this a method of VehicleState for 
-//       the common refactor?
-/// Updates the vehicle state with the new data recieved from devices
-pub(super) fn ingest(state: &mut VehicleState, data: Vec<Data>) {
+/// Updates the vehicle state with the new data recieved (flight 1.0 code can be reused)
+pub(super) fn ingest(state: &mut VehicleState, data: Vec<DataMessage>) {
   todo!()
 }
