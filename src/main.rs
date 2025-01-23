@@ -2,6 +2,7 @@ mod config;
 mod device;
 mod servo;
 mod state;
+mod sequence;
 
 use std::{collections::HashMap, net::{TcpListener, TcpStream}, time::Duration};
 

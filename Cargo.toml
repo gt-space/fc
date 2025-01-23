@@ -7,3 +7,4 @@ edition = "2021"
 common = { git = "https://github.com/gt-space/luna.git", features = ["sequences"], branch = "dev/common-refactor" }
 postcard = { version = "1.0.8", features = ["alloc"] }
 serde = { version = "1.0", features = ["derive"] }
+mmap-sync = "2.0.1"
