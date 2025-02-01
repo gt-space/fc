@@ -55,7 +55,7 @@ pub(crate) fn kill(sequences: &mut HashMap<String, Child>, name: &String) -> io:
             }
 
             c
-        },
+        }
         None => {
             println!("A sequence named '{name}' isn't running.");
             return Ok(());
@@ -81,7 +81,7 @@ pub(crate) fn handle_commands(socket: &UnixDatagram, mappings: &Vec<NodeMapping>
             Ok(s) => s,
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
             Err(e) => {
-                eprintln!("Error in recieving from sequence command socket: {e}");
+                eprintln!("Error in receiving from sequence command socket: {e}");
                 break;
             }
         };
