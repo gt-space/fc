@@ -1,4 +1,4 @@
-use common::comm::{sam::SamControlMessage, CompositeValveState, NodeMapping, SensorType, Sequence, ValveState, VehicleState};
+use common::comm::{sam::SamControlMessage, CompositeValveState, NodeMapping, SensorType, Sequence, ValveState, VehicleState, flight::SequenceDomainCommand};
 use std::{collections::HashMap, io, os::unix::net::UnixDatagram, process::{Child, Command}};
 
 // TODO: Refactor this code to use custom error types
@@ -65,13 +65,6 @@ pub(crate) fn kill(sequences: &mut HashMap<String, Child>, name: &String) -> io:
     sequence.kill()
 }
 
-// TODO: Put this in common?
-#[derive(serde::Deserialize)]
-enum SamCommand {
-    ActuateValve { valve: String, state: ValveState },
-    Abort,
-}
-
 pub(crate) fn handle_commands(socket: &UnixDatagram, mappings: &Vec<NodeMapping>, vehicle_state: &mut VehicleState) -> Vec<SamControlMessage> {
     let mut buf: [u8; 1024] = [0; 1024];
     let mut commands: Vec<SamControlMessage> = Vec::new();
@@ -86,16 +79,16 @@ pub(crate) fn handle_commands(socket: &UnixDatagram, mappings: &Vec<NodeMapping>
             }
         };
 
-        let command = match postcard::from_bytes::<SamCommand>(&buf[..size]) {
+        let command = match postcard::from_bytes::<SequenceDomainCommand>(&buf[..size]) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Error in deserializing SamCommand from sequence: {e}");
+                eprintln!("Error in deserializing SequenceDomainCommand from sequence: {e}");
                 continue;
             }
         };
 
         match command {
-            SamCommand::ActuateValve { valve, state } => {
+            SequenceDomainCommand::ActuateValve { valve, state } => {
                 let Some(mapping) = mappings.iter().find(|m| m.text_id == valve) else {
                     eprintln!("Failed to actuate valve: mapping '{valve}' is not defined.");
                     continue;
@@ -124,7 +117,7 @@ pub(crate) fn handle_commands(socket: &UnixDatagram, mappings: &Vec<NodeMapping>
                     );
                 }
             }
-            SamCommand::Abort => todo!()
+            SequenceDomainCommand::Abort => todo!()
         }
     }
 

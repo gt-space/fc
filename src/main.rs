@@ -4,14 +4,14 @@ mod servo;
 mod state;
 mod sequence;
 
-use std::{collections::HashMap, net::{TcpListener, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::Child, time::Duration};
+use std::{collections::HashMap, net::{TcpListener, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::Child, thread, time::Duration};
 use common::comm::{flight::BoardId, FlightControlMessage, NodeMapping, VehicleState};
 use mmap_sync::synchronizer::Synchronizer;
 use servo::ServoError;
 
 /// The address that boards can connect to
 const LISTENER_ADDRESS: (&str, u16) = ("0.0.0.0", 4573);
-const SERVO_ADDRESS: (&str, u16) = ("192.168.1.10", 5025);
+const SERVO_ADDRESS: (&str, u16) = ("127.0.0.1", 5025);
 const FC_SOCKET_ADDRESS: (&str, u16) = ("0.0.0.0", 0);
 const SAM_PORT: u16 = 8378;
 const DATAGRAM_PATH: &str = "";
@@ -29,14 +29,28 @@ fn main() -> ! {
     let commands: UnixDatagram = UnixDatagram::bind(DATAGRAM_PATH).expect(&format!("Could not open sequence command socket on path '{DATAGRAM_PATH}'."));
     commands.set_nonblocking(true).expect("Cannot set sequence command socket to non-blocking.");
     let synchronizer: Synchronizer = Synchronizer::new(MMAP_PATH.as_ref());
-    let mut servo_stream = servo::establish(SERVO_ADDRESS, 3, Duration::from_secs(2)).expect("Could't set up initial servo connection");
     let servo_socket = UdpSocket::bind(FC_SOCKET_ADDRESS).expect(&format!("Couldn't open port {} on IP address {}", FC_SOCKET_ADDRESS.1, FC_SOCKET_ADDRESS.0));
     
+    let mut servo_stream = loop {
+        match servo::establish(SERVO_ADDRESS, 3, Duration::from_secs(2)) {
+            Ok(s) => {
+                println!("Connected to servo successfully. Beginning control cycle...\n");
+                break s;
+            },
+            Err(e) => {
+                println!("Couldn't connect due to error: {e}\n");
+                thread::sleep(Duration::from_secs(2));
+            },
+        }    
+    };
+    
+        
     loop {
         // servo (logic that interacts with servo)
         let servo_message = servo::pull(&mut servo_stream)
             .unwrap_or_else(|e| {
                 eprintln!("Issue in pulling data from Servo: {e}");
+
                 match e {
                     ServoError::ServoDisconnected => {
                         if let Ok(s) = servo::establish(SERVO_ADDRESS, 1, Duration::from_millis(100)) {
@@ -49,6 +63,7 @@ fn main() -> ! {
                     ServoError::DeserializationFailed(_) => todo!(),
                     ServoError::TransportFailed(_) => todo!(),
                 };
+
                 None
             }
         );
@@ -56,6 +71,7 @@ fn main() -> ! {
         // decoding servo message
         if let Some(command) = servo_message {
             println!("Recieved a FlightControlMessage: {command:#?}");
+
             match command {
                 FlightControlMessage::Abort => todo!(),
                 FlightControlMessage::AhrsCommand(_) => todo!(),
