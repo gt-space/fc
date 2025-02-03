@@ -47,6 +47,7 @@ pub(crate) fn establish(servo_address: impl ToSocketAddrs, chances: u8, timeout:
           if let Err(e) = s.write_all(&identity) {
             return Err(ServoError::TransportFailed(e));
           } else {
+            s.set_nodelay(true).map_err(|e| ServoError::TransportFailed(e))?;
             return Ok(s);
           }
         },

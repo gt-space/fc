@@ -5,17 +5,15 @@ mod state;
 mod sequence;
 
 use std::{collections::HashMap, net::{TcpListener, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::Child, thread, time::Duration};
-use common::comm::{flight::BoardId, FlightControlMessage, NodeMapping, VehicleState};
+use common::{sequence::{MMAP_PATH, SOCKET_PATH}, comm::{flight::BoardId, FlightControlMessage, NodeMapping, VehicleState}};
 use mmap_sync::synchronizer::Synchronizer;
 use servo::ServoError;
 
 /// The address that boards can connect to
 const LISTENER_ADDRESS: (&str, u16) = ("0.0.0.0", 4573);
-const SERVO_ADDRESS: (&str, u16) = ("127.0.0.1", 5025);
+const SERVO_ADDRESS: (&str, u16) = ("192.168.1.10", 5025);
 const FC_SOCKET_ADDRESS: (&str, u16) = ("0.0.0.0", 0);
 const SAM_PORT: u16 = 8378;
-const DATAGRAM_PATH: &str = "";
-const MMAP_PATH: &str = "";
 const MMAP_GRACE_PERIOD: Duration = Duration::from_millis(20);
 
 fn main() -> ! {
@@ -26,7 +24,7 @@ fn main() -> ! {
     let mut sam_mappings: Vec<NodeMapping> = Vec::new();
     let vehicle_state = VehicleState::new();
     let mut sequences: HashMap<String, Child> = HashMap::new();
-    let commands: UnixDatagram = UnixDatagram::bind(DATAGRAM_PATH).expect(&format!("Could not open sequence command socket on path '{DATAGRAM_PATH}'."));
+    let commands: UnixDatagram = UnixDatagram::bind(SOCKET_PATH).expect(&format!("Could not open sequence command socket on path '{SOCKET_PATH}'."));
     commands.set_nonblocking(true).expect("Cannot set sequence command socket to non-blocking.");
     let synchronizer: Synchronizer = Synchronizer::new(MMAP_PATH.as_ref());
     let servo_socket = UdpSocket::bind(FC_SOCKET_ADDRESS).expect(&format!("Couldn't open port {} on IP address {}", FC_SOCKET_ADDRESS.1, FC_SOCKET_ADDRESS.0));
