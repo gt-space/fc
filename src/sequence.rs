@@ -4,7 +4,7 @@ use std::{collections::HashMap, io, os::unix::net::UnixDatagram, process::{Child
 // TODO: Refactor this code to use custom error types
 
 fn run(mappings: &Vec<NodeMapping>, sequence: &Sequence) -> io::Result<Child> {
-    let mut script = String::from("from sequences import *;");
+    let mut script = String::from("from common import *;");
     for mapping in mappings {
         let definition = match mapping.sensor_type {
             SensorType::Valve => format!("{0} = Valve('{0}');", mapping.text_id),
