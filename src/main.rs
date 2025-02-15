@@ -3,9 +3,11 @@ mod device;
 mod servo;
 mod state;
 
-use std::{collections::HashMap, net::{TcpListener, TcpStream}, time::Duration};
+use std::{collections::HashMap, net::{TcpListener, TcpStream, IpAddr}, time::Duration};
 
 use common::comm::{flight::BoardId, NodeMapping, VehicleState};
+use bimap::BiHashMap;
+use device::BoardState;
 
 // TODO: Make VehicleState belong to flight instead of common.
 
@@ -14,6 +16,7 @@ const LISTENER_ADDRESS: (&str, u16) = ("0.0.0.0", 4573);
 const SERVO_ADDRESS: (&str, u16) = ("192.168.1.10", 5025);
 const SAM_PORT: u16 = 8378;
 
+
 fn main() {
     println!("Flight Computer running at version {}\n", env!("CARGO_PKG_VERSION"));
     let listener = TcpListener::bind(LISTENER_ADDRESS).expect(&format!("Couldn't open port {} on IP address {}", LISTENER_ADDRESS.1, LISTENER_ADDRESS.0));
@@ -21,6 +24,8 @@ fn main() {
     let mut devices: HashMap<BoardId, TcpStream> = HashMap::new();
     let sam_mappings: Vec<NodeMapping> = Vec::new();
     let vehicle_state = VehicleState::new();
+    let ip_mappings: BiHashMap<BoardId, IpAddr> = BiHashMap::new();
+    let boardstates: HashMap<BoardId, BoardState> = HashMap::new();
 
     let mut servo_stream = servo::establish(SERVO_ADDRESS, 3, Duration::from_secs(2)).expect("Could't set up initial servo connection");
     loop {
