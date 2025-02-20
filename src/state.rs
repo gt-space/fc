@@ -1,3 +1,4 @@
+
 use common::comm::sam::SamControlMessage;
 use common::comm::{ahrs::DataPoint, flight::DataMessage, VehicleState, NodeMapping, sam, Measurement,
   SensorType,
@@ -7,15 +8,14 @@ use std::borrow::Cow;
 use std::{collections::HashMap};
 use crate::config::{BoardId};
 use jeflog::{fail, pass, warn};
-
+use common::comm::{flight::DataMessage, VehicleState};
+use crate::MMAP_GRACE_PERIOD;
+use mmap_sync::synchronizer::{Synchronizer, SynchronizerError};
 
 /// Updates the vehicle state with the new data recieved (flight 1.0 code can be reused)
 trait DataHandler{
   fn update_state(&self, state: &mut VehicleState, mappings: &[NodeMapping]);
 }
-
-
-
 
 
 impl <'a> DataHandler for DataMessage <'a> {
@@ -42,8 +42,6 @@ impl <'a> DataHandler for DataMessage <'a> {
     }
   }
 }
-
-
 
 
 pub(super) fn ingest(state: &mut VehicleState, data: Vec<DataMessage>, mappings: &[NodeMapping]) {
@@ -238,3 +236,8 @@ fn estimate_valve_state(
 
   estimated
 }
+
+pub(crate) fn sync_sequences(mut sync: Synchronizer, state: &VehicleState) -> Result<(usize, bool), SynchronizerError> {
+  sync.write(state, MMAP_GRACE_PERIOD)
+}
+
