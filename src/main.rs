@@ -4,10 +4,18 @@ mod servo;
 mod state;
 mod sequence;
 
+use std::{collections::HashMap, net::{TcpListener, TcpStream, IpAddr}, time::Duration};
+
+use common::comm::{flight::BoardId, NodeMapping, VehicleState};
+use bimap::BiHashMap;
+use device::BoardState;
+
+// TODO: Make VehicleState belong to flight instead of common.
 use std::{collections::HashMap, net::{TcpListener, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::Child, thread, time::Duration};
 use common::{sequence::{MMAP_PATH, SOCKET_PATH}, comm::{flight::BoardId, FlightControlMessage, NodeMapping, VehicleState}};
 use mmap_sync::synchronizer::Synchronizer;
 use servo::ServoError;
+
 
 /// The address that boards can connect to
 const LISTENER_ADDRESS: (&str, u16) = ("0.0.0.0", 4573);
@@ -16,6 +24,7 @@ const FC_SOCKET_ADDRESS: (&str, u16) = ("0.0.0.0", 0);
 const SAM_PORT: u16 = 8378;
 const MMAP_GRACE_PERIOD: Duration = Duration::from_millis(20);
 
+
 fn main() -> ! {
     println!("Flight Computer running at version {}\n", env!("CARGO_PKG_VERSION"));
     let listener = TcpListener::bind(LISTENER_ADDRESS).expect(&format!("Couldn't open port {:04} on IP address {}", LISTENER_ADDRESS.1, LISTENER_ADDRESS.0));
@@ -23,6 +32,9 @@ fn main() -> ! {
     let devices: HashMap<BoardId, TcpStream> = HashMap::new();
     let mut sam_mappings: Vec<NodeMapping> = Vec::new();
     let vehicle_state = VehicleState::new();
+    let ip_mappings: BiHashMap<BoardId, IpAddr> = BiHashMap::new();
+    let boardstates: HashMap<BoardId, BoardState> = HashMap::new();
+    let mut servo_stream = servo::establish(SERVO_ADDRESS, 3, Duration::from_secs(2)).expect("Could't set up initial servo connection");
     let mut sequences: HashMap<String, Child> = HashMap::new();
     let commands: UnixDatagram = UnixDatagram::bind(SOCKET_PATH).expect(&format!("Could not open sequence command socket on path '{SOCKET_PATH}'."));
     commands.set_nonblocking(true).expect("Cannot set sequence command socket to non-blocking.");
