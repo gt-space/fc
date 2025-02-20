@@ -29,7 +29,7 @@ fn main() -> ! {
     let synchronizer: Synchronizer = Synchronizer::new(MMAP_PATH.as_ref());
     let servo_socket = UdpSocket::bind(FC_SOCKET_ADDRESS).expect(&format!("Couldn't open port {} on IP address {}", FC_SOCKET_ADDRESS.1, FC_SOCKET_ADDRESS.0));
     
-    let mut servo_stream = loop {
+    let (mut servo_stream, mut servo_address)= loop {
         match servo::establish(SERVO_ADDRESS, 3, Duration::from_secs(2)) {
             Ok(s) => {
                 println!("Connected to servo successfully. Beginning control cycle...\n");
@@ -52,7 +52,7 @@ fn main() -> ! {
                 match e {
                     ServoError::ServoDisconnected => {
                         if let Ok(s) = servo::establish(SERVO_ADDRESS, 1, Duration::from_millis(100)) {
-                            servo_stream = s;
+                            (servo_stream, servo_address) = s;
                             eprintln!("Connection successfully re-established.");
                         } else {
                             eprintln!("Connection could not be re-established. Continuing...")
@@ -85,7 +85,7 @@ fn main() -> ! {
             }
         }
 
-        if let Err(e) = servo::push(&servo_socket, &vehicle_state) {
+        if let Err(e) = servo::push(&servo_socket, servo_address, &vehicle_state) {
             eprintln!("Issue in sending servo the vehicle telemetry: {e}");
         }
         
