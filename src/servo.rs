@@ -44,10 +44,12 @@ pub(crate) fn establish(servo_address: impl ToSocketAddrs, chances: u8, timeout:
   
       match TcpStream::connect_timeout(addr, timeout) {
         Ok(mut s) => {
+          s.set_nodelay(true).map_err(|e| ServoError::TransportFailed(e))?;
+          s.set_nonblocking(true).map_err(|e| ServoError::TransportFailed(e))?;
+
           if let Err(e) = s.write_all(&identity) {
             return Err(ServoError::TransportFailed(e));
           } else {
-            s.set_nodelay(true).map_err(|e| ServoError::TransportFailed(e))?;
             return Ok(s);
           }
         },
