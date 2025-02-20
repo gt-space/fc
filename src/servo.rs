@@ -48,6 +48,7 @@ pub(crate) fn establish(servo_address: impl ToSocketAddrs, chances: u8, timeout:
             return Err(ServoError::TransportFailed(e));
           } else {
             s.set_nodelay(true).map_err(|e| ServoError::TransportFailed(e))?;
+            s.set_nonblocking(true).map_err(|e| ServoError::TransportFailed(e))?;
             return Ok(s);
           }
         },
