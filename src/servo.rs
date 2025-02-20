@@ -23,7 +23,7 @@ impl fmt::Display for ServoError {
   }
 }
 
-pub(crate) fn establish(servo_address: impl ToSocketAddrs, chances: u8, timeout: Duration) -> Result<TcpStream> {
+pub(crate) fn establish(servo_address: impl ToSocketAddrs, chances: u8, timeout: Duration) -> Result<(TcpStream, SocketAddr)> {
   // buffer containing the serialized identity message to be sent to the control server
   let mut identity = [0; Computer::POSTCARD_MAX_SIZE];
 
@@ -50,7 +50,7 @@ pub(crate) fn establish(servo_address: impl ToSocketAddrs, chances: u8, timeout:
           if let Err(e) = s.write_all(&identity) {
             return Err(ServoError::TransportFailed(e));
           } else {
-            return Ok(s);
+            return Ok((s, *addr));
           }
         },
         Err(e) => fatal_error = e,
@@ -79,13 +79,13 @@ pub(crate) fn pull(servo_stream: &mut TcpStream) -> Result<Option<FlightControlM
 }
 
 // sends new VehicleState to servo. Refactor to use UDP
-pub(crate) fn push(socket: &UdpSocket, state: &VehicleState) -> Result<usize> {
+pub(crate) fn push(socket: &UdpSocket, servo_socket: SocketAddr, state: &VehicleState) -> Result<usize> {
   let message = match postcard::to_allocvec(state) {
     Ok(v) => v,
     Err(e) => return Err(ServoError::DeserializationFailed(e)),
   };
 
-  match socket.send_to(&message, SERVO_ADDRESS) {
+  match socket.send_to(&message, servo_socket) {
     Ok(s) => Ok(s),
     Err(e) => Err(ServoError::TransportFailed(e)),
   }
