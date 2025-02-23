@@ -2,8 +2,6 @@ use std::{fmt, io::{self, Read, Write}, net::{SocketAddr, TcpStream, ToSocketAdd
 use common::comm::{Computer, FlightControlMessage, VehicleState};
 use postcard::experimental::max_size::MaxSize;
 
-use crate::SERVO_ADDRESS;
-
 type Result<T> = std::result::Result<T, ServoError>;
 
 #[derive(Debug)]
@@ -89,9 +87,4 @@ pub(crate) fn push(socket: &UdpSocket, servo_socket: SocketAddr, state: &Vehicle
     Ok(s) => Ok(s),
     Err(e) => Err(ServoError::TransportFailed(e)),
   }
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
 }

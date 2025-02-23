@@ -1,9 +1,7 @@
-use std::{collections::{HashMap, HashSet}, io, net::{IpAddr, TcpListener, TcpStream, UdpSocket}, time::{Duration, Instant}};
+use std::{collections::HashMap, io, net::{IpAddr, TcpListener, TcpStream, UdpSocket}, time::{Duration, Instant}};
 use crate::config::{ip_to_id, BoardId};
-use common::comm::{flight::{DataMessage}, sam::SamControlMessage};
-use std::io::Read;
+use common::comm::flight::DataMessage;
 use bimap::BiHashMap;
-use jeflog::{fail, pass, warn};
 
 pub struct BoardState {
     last_message: Instant, 
@@ -89,16 +87,16 @@ pub(crate) fn pull<'b>(socket: &UdpSocket, ip_mappings: BiHashMap<BoardId, IpAdd
                             let handshake = match postcard::to_slice(&identity, &mut buffer) {
                               Ok(identity) => identity,
                               Err(error) => {
-                                warn!("Failed to deserialize identity message: {error}");
+                                eprintln!("Failed to deserialize identity message: {error}");
                                 continue;
                               }
                             };
                             match socket.send_to(handshake, senderAddr) {
                                 Ok(_) => {
-                                    pass!("Sent identity handshake to {senderAddr}.");
+                                    println!("Sent identity handshake to {senderAddr}.");
                                 }
                                 Err(e) => {
-                                    fail!("Failed to send identity handshake to {senderAddr}: {e}");
+                                    eprintln!("Failed to send identity handshake to {senderAddr}: {e}");
                                 }
                             }
                             collected_data.push(DataMessage::Identity(id.to_string()));
@@ -163,7 +161,7 @@ pub fn sendHeartBeat(ip_mappings: BiHashMap<BoardId, IpAddr>, board_states: Hash
     let heartbeat = match heartbeat {
       Ok(package) => package,
       Err(error) => {
-        fail!("Failed to serialize serialize heartbeat: {error}");
+        eprintln!("Failed to serialize serialize heartbeat: {error}");
         return;
       }
     };

@@ -1,22 +1,11 @@
-
-use common::comm::sam::SamControlMessage;
-use common::comm::{ahrs::DataPoint, flight::DataMessage, VehicleState, NodeMapping, sam, Measurement,
-  SensorType,
-  ValveState, Unit, ChannelType, CompositeValveState};
-use common::comm::ahrs;
-use std::borrow::Cow;
-use std::{collections::HashMap};
-use crate::config::{BoardId};
-use jeflog::{fail, pass, warn};
-use common::comm::{flight::DataMessage, VehicleState};
-use crate::MMAP_GRACE_PERIOD;
+use common::comm::{ahrs, flight::DataMessage, sam::{self, ChannelType, Unit}, CompositeValveState, Measurement, NodeMapping, SensorType, ValveState, VehicleState};
+use crate::{MMAP_GRACE_PERIOD, config::BoardId};
 use mmap_sync::synchronizer::{Synchronizer, SynchronizerError};
 
 /// Updates the vehicle state with the new data recieved (flight 1.0 code can be reused)
 trait DataHandler{
   fn update_state(&self, state: &mut VehicleState, mappings: &[NodeMapping]);
 }
-
 
 impl <'a> DataHandler for DataMessage <'a> {
   fn update_state(&self, state: &mut VehicleState, mappings: &[NodeMapping]) {
@@ -152,7 +141,7 @@ fn process_sam_data(state: &mut VehicleState, datapoints: &[sam::DataPoint], map
               text_id = format!("{text_id}_I");
             }
             channel_type => {
-              warn!("Measured channel type of '{channel_type:?}' for valve.");
+              eprintln!("Measured channel type of '{channel_type:?}' for valve.");
               continue;
             }
           };

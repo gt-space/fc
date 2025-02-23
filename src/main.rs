@@ -4,17 +4,14 @@ mod servo;
 mod state;
 mod sequence;
 
-use std::{collections::HashMap, net::{TcpListener, TcpStream, IpAddr}, time::Duration};
 
-use common::comm::{flight::BoardId, NodeMapping, VehicleState};
-use bimap::BiHashMap;
-use device::BoardState;
 
 // TODO: Make VehicleState belong to flight instead of common.
-use std::{collections::HashMap, net::{TcpListener, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::Child, thread, time::Duration};
+use std::{collections::HashMap, net::{TcpListener, IpAddr, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::Child, thread, time::Duration};
 use common::{sequence::{MMAP_PATH, SOCKET_PATH}, comm::{flight::BoardId, FlightControlMessage, NodeMapping, VehicleState}};
 use mmap_sync::synchronizer::Synchronizer;
-use servo::ServoError;
+use crate::{device::BoardState, servo::ServoError};
+use bimap::BiHashMap;
 
 
 /// The address that boards can connect to
