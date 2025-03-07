@@ -65,9 +65,9 @@ pub(crate) fn kill(sequences: &mut HashMap<String, Child>, name: &String) -> io:
     sequence.kill()
 }
 
-pub(crate) fn handle_commands(socket: &UnixDatagram, mappings: &Vec<NodeMapping>, vehicle_state: &mut VehicleState) -> Vec<SamControlMessage> {
+pub(crate) fn pull_commands<'a>(socket: &UnixDatagram, mappings: &'a Vec<NodeMapping>, vehicle_state: &mut VehicleState) -> Vec<(&'a str, SamControlMessage)> {
     let mut buf: [u8; 1024] = [0; 1024];
-    let mut commands: Vec<SamControlMessage> = Vec::new();
+    let mut commands = Vec::new();
 
     loop {
         let size = match socket.recv(&mut buf) {
@@ -98,12 +98,13 @@ pub(crate) fn handle_commands(socket: &UnixDatagram, mappings: &Vec<NodeMapping>
                 let normally_closed = mapping.normally_closed.unwrap_or(true);
                 let powered = closed != normally_closed;
 
-                commands.push(
+                commands.push((
+                    &mapping.board_id[..],
                     SamControlMessage::ActuateValve {
                         channel: mapping.channel,
                         powered,
                     }
-                );
+                ));
 
                 if let Some(existing) = vehicle_state.valve_states.get_mut(&valve) {
                     existing.commanded = state;

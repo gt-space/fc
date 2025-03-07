@@ -1,175 +1,158 @@
-use std::{collections::HashMap, io, net::{IpAddr, TcpListener, TcpStream, UdpSocket}, time::{Duration, Instant}};
-use crate::config::{ip_to_id, BoardId};
+use core::fmt;
+use std::{io, net::{IpAddr, SocketAddr, UdpSocket}, time::Instant};
 use common::comm::flight::DataMessage;
-use bimap::BiHashMap;
 
-pub struct BoardState {
-    last_message: Instant, 
-    is_dead: bool,
-    //Other Meta Data we need to keep track of 
-  }
+use crate::TIME_TO_LIVE;
 
+#[derive(PartialEq, Clone)]
+pub(crate) enum State {
+    Connected,
+    Disconnected,
+}
 
-//No longer needed for Udp?
-pub(crate) fn listen(listener: &TcpListener) -> Vec<(BoardId, TcpStream)> {
-    let mut connections = Vec::new();
+#[derive(Clone)]
+pub(crate) struct Device {
+    id: String,
+    address: SocketAddr,
+    last_recieved: Instant,
+    state: State,
+}
+
+impl Device {
+    fn new(id: String, address: SocketAddr) -> Self {
+        Device { id, address, last_recieved: Instant::now(), state: State::Connected }
+    }
+
+    /// Should be ran whenever data is received from a board to update
+    pub(crate) fn data_received(&mut self) {
+        self.last_recieved = Instant::now();
+
+        if self.state == State::Disconnected {
+            println!("{} at {} reconnected!", self.address.ip(), self.id);
+            self.state = State::Connected;
+        }
+    }
+
+    // performs a flight handshake with the board.
+    pub(crate) fn handshake(&self, socket: &UdpSocket) -> Result<()> {
+        let mut buf: [u8; 1024] = [0; 1024];
+        let serialized = postcard::to_slice(&DataMessage::Identity("flight-01".to_string()), &mut buf)
+            .map_err(|e| Error::SerializationFailed(e))?;
+        socket.send_to(serialized, self.address).map_err(|e| Error::HandshakeTransportFailed(e))?;
+        Ok(())
+    }
+
+    pub(crate) fn send_heartbeat(&self, socket: &UdpSocket) -> Result<()> {
+        let mut buf: [u8; 1024] = [0; 1024];
+        let serialized = postcard::to_slice(&DataMessage::FlightHeartbeat, &mut buf)
+            .map_err(|e| Error::SerializationFailed(e))?;
+        socket.send_to(serialized, self.address).map_err(|e| Error::HeartbeatTransportFailed(e))?;
+        Ok(())
+    }
+
+    pub(crate) fn is_expired(&self) -> bool {
+        Instant::now().duration_since(self.last_recieved) > TIME_TO_LIVE
+    }
+
+    pub(crate) fn set_disconnected(&mut self) {
+        self.state = State::Disconnected;
+    }
+
+    pub(crate) fn is_disconnected(&self) -> bool {
+        self.state == State::Disconnected
+    }
+
+    pub(crate) fn get_board_id(&self) -> &String {
+        &self.id
+    }
+
+    pub(crate) fn get_ip(&self) -> IpAddr {
+        self.address.ip()
+    }
+}
+
+pub(crate) struct Devices {
+    devices: Vec<Device>
+}
+
+impl Devices {
+    /// Creates an empty set to hold Devices
+    pub(crate) fn new() -> Self {
+        Devices { devices: Vec::new() }
+    }
+
+    /// Inserts a device into the set, overwriting an existing device.
+    /// Overwriting a device replaces all of its associated data, as if it were
+    /// connecting for the first time. Returns the 
+    pub(crate) fn add_or_overwrite(&mut self, id: String, address: SocketAddr) {
+        let device = Device::new(id, address);
+
+        if let Some(copy) = self.devices.iter_mut().find(|d| d.id == device.id) {
+            *copy = device;
+        } else {
+            self.devices.push(device);
+        }
+    }
+
+    pub(crate) fn find_by_address(&mut self, address: &SocketAddr) -> Option<&mut Device> {
+        self.devices.iter_mut().find(|d| d.address == *address)
+    }
+
+    pub(crate) fn has_id(&self, id: &str) -> bool {
+        self.devices.iter().find(|d| d.id == id).is_some()
+    }
+
+    pub(crate) fn iter(&self) -> ::core::slice::Iter<'_, Device> {
+        self.devices.iter()
+    }
+    
+    pub(crate) fn iter_mut(&mut self) -> ::core::slice::IterMut<'_, Device> {
+        self.devices.iter_mut()
+    }
+}
+
+/// Gets the most recent UDP Commands
+pub(crate) fn receive(socket: &UdpSocket) -> Vec<(SocketAddr, DataMessage)> {
+    let mut messages = Vec::new();
+    let mut buf: [u8; 1024] = [0; 1024];
     
     loop {
-        match listener.accept() {
-            Ok((stream, address)) => {
-                let id = match ip_to_id(address.ip()) {
-                    Ok(a) => a,
-                    Err(e) => {
-                        eprintln!("{}", e);
-                        continue;
-                    }
-                };
-
-                connections.push((id, stream));
-            }
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return connections,
+        let (size, address) = match socket.recv_from(&mut buf) {
+            Ok(metadata) => metadata,
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
             Err(e) => {
-                eprintln!("Error when accepting new device connection from listener: {e:#?}");
-                return connections;
-            }
-        };
-    };
-}
-
-// lifetime specifiers here are tricky. we want the data within the data message to be dropped
-// once it's processed by state::ingest
-pub(crate) fn pull<'b>(socket: &UdpSocket, ip_mappings: BiHashMap<BoardId, IpAddr>, board_states: HashMap<BoardId, BoardState>) -> Vec<DataMessage<'b>> {
-
-    let mut collected_data = Vec::new();
-    const BUFFER_SIZE: usize = 1024;
-    let mut buffer = [0u8; BUFFER_SIZE];
-    socket.set_nonblocking(true).expect("Could not set non-blocking"); 
-    socket.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
-    
-    //this should be part of shared maybe or some sort of global property?
-    //let mut boards: HashSet<BoardId> = HashSet::new();
-
-    loop{
-        match socket.recv_from(&mut buffer) {
-            Ok((n, senderAddr)) => {
-                if(n==0) {
-                    continue; 
-                    //no data
-                }
-              let id_result = ip_to_id(senderAddr.ip());  
-              match id_result {
-                Ok(id) => {
-                    //add to time tracker
-                    board_states.insert(id, BoardState {
-                        last_message: Instant::now(),
-                        is_dead: false,
-                    });
-                    let incoming_data = postcard::from_bytes(&buffer[..n]);
-                    let incoming_data = match incoming_data {
-                      Ok(data) => data,
-                      Err(error) => {
-                        eprintln!("Failed to interpret buffer data: {error}");
-                        continue;
-                      }
-                    };
-                    let message = match incoming_data {
-                        DataMessage::Identity(board_id) => {
-                            if(board_id != id.to_string()) {
-                                //handle this edge case
-                            }
-                            //add to mapping
-                            ip_mappings.insert(board_id, senderAddr.ip());
-
-                            //Send Handshake Back
-                            const FC_BOARD_ID: &str = "flight-01";
-                            let identity = DataMessage::Identity(String::from(FC_BOARD_ID));
-
-                            let handshake = match postcard::to_slice(&identity, &mut buffer) {
-                              Ok(identity) => identity,
-                              Err(error) => {
-                                eprintln!("Failed to deserialize identity message: {error}");
-                                continue;
-                              }
-                            };
-                            match socket.send_to(handshake, senderAddr) {
-                                Ok(_) => {
-                                    println!("Sent identity handshake to {senderAddr}.");
-                                }
-                                Err(e) => {
-                                    eprintln!("Failed to send identity handshake to {senderAddr}: {e}");
-                                }
-                            }
-                            collected_data.push(DataMessage::Identity(id.to_string()));
-                        }
-                        DataMessage::Sam(board_id, datapoints) => {
-                            collected_data.push(DataMessage::Sam((id.to_string()), (datapoints)));
-                        }
-
-                        DataMessage::Bms(board_id, datapoints) => {
-                            collected_data.push(DataMessage::Bms((id.to_string()), (datapoints)));
-                        }
-                        DataMessage::Ahrs(board_id, datapoints) => {
-                            collected_data.push(DataMessage::Ahrs((id.to_string()), (datapoints)));
-                        }
-                        DataMessage::FlightHeartbeat => {
-                            //not a message that we will receive
-                        }
-                    }; 
-                }
-                Err(err) => {
-                    eprintln!("Could not convert ip to id");
-                }
-              }
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                // No data 
-                //Maybe we Check heartbeats
+                eprintln!("Can't get receive incoming ethernet packets: {e:#?}");
                 break;
             }
+        };
+
+        let serialized_message = match postcard::from_bytes::<DataMessage>(&buf) {
+            Ok(s) => s,
             Err(e) => {
-                eprintln!("Error with parsing UDP data: {} " , e );
+                eprintln!("Received a message from a board, but couldn't decode it, packet was of size {}: {e}", size);
+                continue;
             }
-        }
-    }
-    collected_data
-}
+        };
 
-// create a function or series of functions that takes a command and sends it to a board
-
-//checks if it has been too lond since we received a message from a given board
-pub(crate) fn checkBoards(board_states: &mut HashMap<BoardId, BoardState>) {
-    const TIME_LIMIT: Duration = Duration::from_millis(100);
-    let now = Instant::now();
-    for (board_id, state) in board_states.iter_mut() {
-        if (now.duration_since(state.last_message) > TIME_LIMIT) {
-            state.is_dead = true;
-            handleDeadBoard(board_id);
-        }
-    }
-}
-
-pub fn handleDeadBoard(id: BoardId) {
-    //handle dead boards
-}
-
-// call this function at a given time interval
-pub fn sendHeartBeat(ip_mappings: BiHashMap<BoardId, IpAddr>, board_states: HashMap<BoardId, BoardState>, socket: &UdpSocket ) {
-    const HEARTBEAT_BUFFER_SIZE: usize = 1_024; 
-    const SWITCHBOARD_ADDRESS: (&str, u16) = ("0.0.0.0", 4573);
-    let mut buf = vec![0; HEARTBEAT_BUFFER_SIZE];
-    let heartbeat = postcard::to_slice(&DataMessage::FlightHeartbeat, &mut buf);
-    let heartbeat = match heartbeat {
-      Ok(package) => package,
-      Err(error) => {
-        eprintln!("Failed to serialize serialize heartbeat: {error}");
-        return;
-      }
+        messages.push((address, serialized_message));
     };
-    for (board_id, ip) in ip_mappings.iter_mut() {
-         if let Some(state) = board_states.get(board_id) {
-            if (state.is_dead == false) {
-                socket.send_to(&heartbeat, SWITCHBOARD_ADDRESS);
-            }
+
+    messages
+}
+
+type Result<T> = ::std::result::Result<T, Error>;
+pub(crate) enum Error {
+    SerializationFailed(postcard::Error),
+    HandshakeTransportFailed(io::Error),
+    HeartbeatTransportFailed(io::Error),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SerializationFailed(e) => write!(f, "Couldn't serialize an outgoing message: {e}"),
+            Self::HandshakeTransportFailed(e) => write!(f, "Couldn't send the flight handshake: {e}"),
+            Self::HeartbeatTransportFailed(e) => write!(f, "Couldn't notify a board that flight is still online: {e}"),
         }
     }
 }

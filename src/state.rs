@@ -1,60 +1,67 @@
-use common::comm::{ahrs, flight::DataMessage, sam::{self, ChannelType, Unit}, CompositeValveState, Measurement, NodeMapping, SensorType, ValveState, VehicleState};
-use crate::{MMAP_GRACE_PERIOD, config::BoardId};
+use common::comm::{ahrs, bms, flight::DataMessage, sam::{self, ChannelType, Unit}, CompositeValveState, Measurement, NodeMapping, SensorType, ValveState, VehicleState};
+use crate::MMAP_GRACE_PERIOD;
 use mmap_sync::synchronizer::{Synchronizer, SynchronizerError};
 
-/// Updates the vehicle state with the new data recieved (flight 1.0 code can be reused)
-trait DataHandler{
-  fn update_state(&self, state: &mut VehicleState, mappings: &[NodeMapping]);
+pub(crate) fn sync_sequences(mut sync: Synchronizer, state: &VehicleState) -> Result<(usize, bool), SynchronizerError> {
+  sync.write(state, MMAP_GRACE_PERIOD)
 }
 
-impl <'a> DataHandler for DataMessage <'a> {
-  fn update_state(&self, state: &mut VehicleState, mappings: &[NodeMapping]) {
+pub(crate) trait Ingestible {
+  fn ingest(&self, vehicle_state: &mut VehicleState, mappings: &Vec<NodeMapping>);
+}
+
+impl<'a> Ingestible for DataMessage<'a> {
+  fn ingest(&self, vehicle_state: &mut VehicleState, mappings: &Vec<NodeMapping>) {
     match self {
-      DataMessage::Ahrs(id, datapoints) => {
-          let datapoints_slice: &[ahrs::DataPoint] = datapoints;
-          for datapoint in datapoints_slice {
-              state.ahrs = datapoint.state;
-          }
-      }
-      DataMessage::Bms(id, datapoint) => {
-          state.bms = datapoint.state;
-      }
       DataMessage::Sam(id, datapoints) => {
-          // Implement SAM state update logic here
-          process_sam_data(state, datapoints, mappings, id);
-      }
-      DataMessage::Identity(id) => {
-      }
-      DataMessage::FlightHeartbeat => {
-          // Handle heartbeat if needed
-      }
-    }
+          if !id.starts_with("sam") {
+              println!("Detected a SAM data message without a SAM signature.");
+          }
+          
+          process_sam_data(id, vehicle_state, datapoints.to_vec(), mappings)
+      },
+      DataMessage::Ahrs(id, datapoints) => {
+          if !id.starts_with("ahrs") {
+              println!("Detected an AHRS data message without an AHRS signature.");
+          }
+
+          process_ahrs_data(vehicle_state, datapoints.to_vec());
+      },
+      DataMessage::Bms(id, datapoint) => {
+          if !id.starts_with("ahrs") {
+              println!("Detected a BMS data message without a BMS signature.");
+          }
+
+          process_bms_data(vehicle_state, *datapoint.to_owned());
+      },
+      DataMessage::FlightHeartbeat | DataMessage::Identity(_) => {},
+  }
   }
 }
 
+pub(crate) fn process_bms_data(state: &mut VehicleState, datapoint: bms::DataPoint) {
+  state.bms = datapoint.state;
+}
 
-pub(super) fn ingest(state: &mut VehicleState, data: Vec<DataMessage>, mappings: &[NodeMapping]) {
-  for message in data {
-    message.update_state(state, mappings);     
+pub(crate) fn process_ahrs_data(state: &mut VehicleState, datapoints: Vec<ahrs::DataPoint>) {
+  if let Some(data) = datapoints.last() {
+    state.ahrs = data.state;
   }
 }
 
-
-fn process_sam_data(state: &mut VehicleState, datapoints: &[sam::DataPoint], mappings: &[NodeMapping], board_id: BoardId) {
+// Optimize this function!
+pub(crate) fn process_sam_data(board_id: &str, state: &mut VehicleState, datapoints: Vec<sam::DataPoint>, mappings: &Vec<NodeMapping>) {
   for data_point in datapoints {
-    for mapping in &*mappings {
+    for mapping in mappings {
       let corresponds = data_point.channel == mapping.channel
-        && mapping
-          .sensor_type
-          .channel_types()
-          .contains(&data_point.channel_type)
-        && *board_id == mapping.board_id;
+        && mapping.sensor_type.channel_types().contains(&data_point.channel_type)
+        && board_id == mapping.board_id;
 
       if !corresponds {
         continue;
       }
 
-      let mut text_id = mapping.text_id;
+      let mut text_id = mapping.text_id.clone();
 
       let measurement = match mapping.sensor_type {
         SensorType::RailVoltage => Measurement {
@@ -159,7 +166,7 @@ fn process_sam_data(state: &mut VehicleState, datapoints: &[sam::DataPoint], map
             existing.actual = actual_state;
           } else {
             state.valve_states.insert(
-              mapping.text_id,
+              mapping.text_id.clone(),
               CompositeValveState {
                 commanded: ValveState::Undetermined,
                 actual: actual_state,
@@ -225,8 +232,3 @@ fn estimate_valve_state(
 
   estimated
 }
-
-pub(crate) fn sync_sequences(mut sync: Synchronizer, state: &VehicleState) -> Result<(usize, bool), SynchronizerError> {
-  sync.write(state, MMAP_GRACE_PERIOD)
-}
-
