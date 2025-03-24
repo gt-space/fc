@@ -1,65 +1,46 @@
 use core::fmt;
 use std::{io, net::{IpAddr, SocketAddr, UdpSocket}, time::Instant};
-use common::comm::flight::DataMessage;
+use common::comm::{ahrs, bms, flight::DataMessage, sam::SamControlMessage, NodeMapping, VehicleState};
 
-use crate::TIME_TO_LIVE;
-
-#[derive(PartialEq, Clone)]
-pub(crate) enum State {
-    Connected,
-    Disconnected,
-}
+use crate::{Ingestible, DEVICE_COMMAND_PORT, TIME_TO_LIVE};
 
 #[derive(Clone)]
 pub(crate) struct Device {
     id: String,
     address: SocketAddr,
     last_recieved: Instant,
-    state: State,
 }
 
 impl Device {
     fn new(id: String, address: SocketAddr) -> Self {
-        Device { id, address, last_recieved: Instant::now(), state: State::Connected }
+        Device { id, address, last_recieved: Instant::now() }
     }
 
-    /// Should be ran whenever data is received from a board to update
-    pub(crate) fn data_received(&mut self) {
-        self.last_recieved = Instant::now();
-
-        if self.state == State::Disconnected {
+    /// Should be ran whenever data is received from a board to update.
+    pub(crate) fn reset_timer(&mut self) {
+        if self.is_disconnected() {
             println!("{} at {} reconnected!", self.address.ip(), self.id);
-            self.state = State::Connected;
         }
-    }
 
-    // performs a flight handshake with the board.
-    pub(crate) fn handshake(&self, socket: &UdpSocket) -> Result<()> {
-        let mut buf: [u8; 1024] = [0; 1024];
-        let serialized = postcard::to_slice(&DataMessage::Identity("flight-01".to_string()), &mut buf)
-            .map_err(|e| Error::SerializationFailed(e))?;
-        socket.send_to(serialized, self.address).map_err(|e| Error::HandshakeTransportFailed(e))?;
-        Ok(())
+        self.last_recieved = Instant::now();
     }
 
     pub(crate) fn send_heartbeat(&self, socket: &UdpSocket) -> Result<()> {
         let mut buf: [u8; 1024] = [0; 1024];
         let serialized = postcard::to_slice(&DataMessage::FlightHeartbeat, &mut buf)
             .map_err(|e| Error::SerializationFailed(e))?;
-        socket.send_to(serialized, self.address).map_err(|e| Error::HeartbeatTransportFailed(e))?;
+        socket.send_to(serialized, self.address).map_err(|e| Error::TransportFailed(e))?;
         Ok(())
     }
 
-    pub(crate) fn is_expired(&self) -> bool {
+    pub(crate) fn is_disconnected(&self) -> bool {
         Instant::now().duration_since(self.last_recieved) > TIME_TO_LIVE
     }
 
-    pub(crate) fn set_disconnected(&mut self) {
-        self.state = State::Disconnected;
-    }
-
-    pub(crate) fn is_disconnected(&self) -> bool {
-        self.state == State::Disconnected
+    /// Sends data to the device via a given socket.
+    pub(crate) fn send(&self, socket: &UdpSocket, buf: &[u8]) -> Result<()> {
+        socket.send_to(buf, (self.address.ip(), DEVICE_COMMAND_PORT)).map_err(|e| Error::TransportFailed(e))?;
+        Ok(())
     }
 
     pub(crate) fn get_board_id(&self) -> &String {
@@ -72,43 +53,145 @@ impl Device {
 }
 
 pub(crate) struct Devices {
-    devices: Vec<Device>
+    devices: Vec<Device>,
+    state: VehicleState,
 }
 
 impl Devices {
     /// Creates an empty set to hold Devices
     pub(crate) fn new() -> Self {
-        Devices { devices: Vec::new() }
+        Devices { devices: Vec::new(), state: VehicleState::new() }
     }
 
     /// Inserts a device into the set, overwriting an existing device.
     /// Overwriting a device replaces all of its associated data, as if it were
-    /// connecting for the first time. Returns the 
-    pub(crate) fn add_or_overwrite(&mut self, id: String, address: SocketAddr) {
-        let device = Device::new(id, address);
+    /// connecting for the first time. Returns a reference to the newly inserted
+    /// device and the overwritten device, if it existed.
+    pub(crate) fn register_device(&mut self, id: &String, address: SocketAddr) -> Option<Device> {
+        let device = Device::new(id.clone(), address);
 
         if let Some(copy) = self.devices.iter_mut().find(|d| d.id == device.id) {
+            let old = copy.clone();
             *copy = device;
+            return Some(old);
         } else {
             self.devices.push(device);
+            return None;
         }
     }
 
-    pub(crate) fn find_by_address(&mut self, address: &SocketAddr) -> Option<&mut Device> {
-        self.devices.iter_mut().find(|d| d.address == *address)
+    pub(crate) fn update_state(&mut self, telemetry: Vec<(SocketAddr, DataMessage)>, mappings: &Vec<NodeMapping>, socket: &UdpSocket) {
+        for (address, message) in telemetry {
+            match message {
+                DataMessage::FlightHeartbeat => continue,
+                DataMessage::Ahrs(ref id, _) |
+                DataMessage::Bms(ref id, _) |
+                DataMessage::Sam(ref id, _) => {
+                    let Some(device) = self.devices.iter_mut().find(|d| d.id == *id) else {
+                        println!("Received data from a device that hasn't been registered. Ignoring...");
+                        continue;
+                    };
+
+                    device.reset_timer();
+                },
+                DataMessage::Identity(ref id) => {
+                    if let Err(e) = handshake(&address, socket) {
+                        println!("Connection with {id} couldn't be established: {e}");
+                    } else {
+                        println!("Connection established with {id}.");
+                        if let Some(old_device) = self.register_device(id, address) {
+                            println!("Overwrote data of previously registered {id} at {}", old_device.address.ip());
+                        }
+                    }
+
+                    continue;
+                }
+            }
+
+            message.ingest(&mut self.state, mappings);
+        }
     }
 
-    pub(crate) fn has_id(&self, id: &str) -> bool {
-        self.devices.iter().find(|d| d.id == id).is_some()
+    fn serialize_and_send<T: serde::ser::Serialize>(&self, socket: &UdpSocket, destination: &String, message: &T) -> std::result::Result<(), String> {
+        let mut buf: [u8; 1024] = [0; 1024];
+
+        let Some(device) = self.devices.iter().find(|d| d.id == *destination) else {
+            return Err("Tried to sent a message to a board that hasn't been connected yet.".to_string());
+        };
+
+        if let Err(e) = postcard::to_slice::<T>(message, &mut buf) {
+            return Err(format!("Couldn't serialize message: {e}"));
+        };
+
+        if let Err(e) = device.send(socket, &buf) {
+            return Err(format!("Couldn't send message to {destination}: {e}"));
+        };
+
+        return Ok(())
     }
 
-    pub(crate) fn iter(&self) -> ::core::slice::Iter<'_, Device> {
-        self.devices.iter()
+    pub(crate) fn send_sam_commands(&mut self, socket: &UdpSocket, commands: Vec<(&String, SamControlMessage)>) {
+        for (destination, command) in commands {
+            if let Err(msg) = self.serialize_and_send(socket, destination, &command) {
+                println!("{}", msg);
+            }
+
+            if let SamControlMessage::ActuateValve { channel, powered } = command {
+                if let Some(existing) = self.state.valve_states.get_mut(&valve) {
+                    existing.commanded = state;
+                } else {
+                    self.state.valve_states.insert(
+                        valve,
+                        CompositeValveState {
+                            commanded: state,
+                            actual: ValveState::Undetermined
+                        }
+                    );
+                }
+            }
+
+            
+        }
+    }
+
+    pub(crate) fn send_bms_command(&self, socket: &UdpSocket, command: bms::Command) {
+        let Some(bms) = self.devices.iter().find(|d| d.id.starts_with("bms")) else {
+            println!("Couldn't send a BMS command as BMS isn't connected.");
+            return;
+        };
+
+        if let Err(msg) = self.serialize_and_send(socket, &bms.id, &command) {
+            println!("{}", msg);
+        }
+    }
+
+    pub(crate) fn send_ahrs_command(&self, socket: &UdpSocket, command: ahrs::Command) {
+        let Some(ahrs) = self.devices.iter().find(|d| d.id.starts_with("ahrs")) else {
+            println!("Couldn't send an AHRS command as AHRS isn't connected.");
+            return;
+        };
+
+        if let Err(msg) = self.serialize_and_send(socket, &ahrs.id, &command) {
+            println!("{}", msg);
+        }
+    }
+
+    pub(crate) fn get_state(&self) -> &VehicleState {
+        return &self.state;
     }
     
     pub(crate) fn iter_mut(&mut self) -> ::core::slice::IterMut<'_, Device> {
         self.devices.iter_mut()
     }
+}
+
+/// performs a flight handshake with the board.
+pub(crate) fn handshake(address: &SocketAddr, socket: &UdpSocket) -> Result<()> {
+    let mut buf: [u8; 1024] = [0; 1024];
+    let serialized = postcard::to_slice(&DataMessage::Identity("flight-01".to_string()), &mut buf)
+        .map_err(|e| Error::SerializationFailed(e))?;
+    socket.send_to(serialized, address).map_err(|e| Error::TransportFailed(e))?;
+    Ok(())
 }
 
 /// Gets the most recent UDP Commands
@@ -126,7 +209,7 @@ pub(crate) fn receive(socket: &UdpSocket) -> Vec<(SocketAddr, DataMessage)> {
             }
         };
 
-        let serialized_message = match postcard::from_bytes::<DataMessage>(&buf) {
+        let serialized_message = match postcard::from_bytes::<DataMessage>(&buf[..size]) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("Received a message from a board, but couldn't decode it, packet was of size {}: {e}", size);
@@ -143,16 +226,14 @@ pub(crate) fn receive(socket: &UdpSocket) -> Vec<(SocketAddr, DataMessage)> {
 type Result<T> = ::std::result::Result<T, Error>;
 pub(crate) enum Error {
     SerializationFailed(postcard::Error),
-    HandshakeTransportFailed(io::Error),
-    HeartbeatTransportFailed(io::Error),
+    TransportFailed(io::Error),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::SerializationFailed(e) => write!(f, "Couldn't serialize an outgoing message: {e}"),
-            Self::HandshakeTransportFailed(e) => write!(f, "Couldn't send the flight handshake: {e}"),
-            Self::HeartbeatTransportFailed(e) => write!(f, "Couldn't notify a board that flight is still online: {e}"),
+            Self::TransportFailed(e) => write!(f, "Couldn't send data to a device: {e}"),
         }
     }
 }

@@ -2,7 +2,7 @@ use common::comm::{ahrs, bms, flight::DataMessage, sam::{self, ChannelType, Unit
 use crate::MMAP_GRACE_PERIOD;
 use mmap_sync::synchronizer::{Synchronizer, SynchronizerError};
 
-pub(crate) fn sync_sequences(mut sync: Synchronizer, state: &VehicleState) -> Result<(usize, bool), SynchronizerError> {
+pub(crate) fn sync_sequences(sync: &mut Synchronizer, state: &VehicleState) -> Result<(usize, bool), SynchronizerError> {
   sync.write(state, MMAP_GRACE_PERIOD)
 }
 
@@ -49,7 +49,7 @@ pub(crate) fn process_ahrs_data(state: &mut VehicleState, datapoints: Vec<ahrs::
   }
 }
 
-// Optimize this function!
+// TODO: Optimize this function?
 pub(crate) fn process_sam_data(board_id: &str, state: &mut VehicleState, datapoints: Vec<sam::DataPoint>, mappings: &Vec<NodeMapping>) {
   for data_point in datapoints {
     for mapping in mappings {

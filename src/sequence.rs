@@ -1,8 +1,6 @@
 use common::comm::{sam::SamControlMessage, CompositeValveState, NodeMapping, SensorType, Sequence, ValveState, VehicleState, flight::SequenceDomainCommand};
 use std::{collections::HashMap, io, os::unix::net::UnixDatagram, process::{Child, Command}};
 
-// TODO: Refactor this code to use custom error types
-
 fn run(mappings: &Vec<NodeMapping>, sequence: &Sequence) -> io::Result<Child> {
     let mut script = String::from("from common import *;");
     for mapping in mappings {
@@ -20,7 +18,7 @@ fn run(mappings: &Vec<NodeMapping>, sequence: &Sequence) -> io::Result<Child> {
         .spawn()
 }
 
-pub(crate) fn execute(mappings: &Vec<NodeMapping>, sequence: Sequence, sequences: &mut HashMap<String, Child>) {
+pub(crate) fn execute(mappings: &Vec<NodeMapping>, sequence: &Sequence, sequences: &mut HashMap<String, Child>) {
     if let Some(running) = sequences.get_mut(&sequence.name) {
         match running.try_wait() {
             Ok(Some(_)) => {},
@@ -43,7 +41,7 @@ pub(crate) fn execute(mappings: &Vec<NodeMapping>, sequence: Sequence, sequences
         }
     };
 
-    sequences.insert(sequence.name, process);
+    sequences.insert(sequence.name.clone(), process);
 }
 
 pub(crate) fn kill(sequences: &mut HashMap<String, Child>, name: &String) -> io::Result<()> {
@@ -65,7 +63,7 @@ pub(crate) fn kill(sequences: &mut HashMap<String, Child>, name: &String) -> io:
     sequence.kill()
 }
 
-pub(crate) fn pull_commands<'a>(socket: &UnixDatagram, mappings: &'a Vec<NodeMapping>, vehicle_state: &mut VehicleState) -> Vec<(&'a str, SamControlMessage)> {
+pub(crate) fn pull_commands<'a>(socket: &UnixDatagram, mappings: &'a Vec<NodeMapping>) -> Vec<(&'a str, SamControlMessage)> {
     let mut buf: [u8; 1024] = [0; 1024];
     let mut commands = Vec::new();
 
@@ -105,18 +103,6 @@ pub(crate) fn pull_commands<'a>(socket: &UnixDatagram, mappings: &'a Vec<NodeMap
                         powered,
                     }
                 ));
-
-                if let Some(existing) = vehicle_state.valve_states.get_mut(&valve) {
-                    existing.commanded = state;
-                } else {
-                    vehicle_state.valve_states.insert(
-                        valve,
-                        CompositeValveState {
-                            commanded: state,
-                            actual: ValveState::Undetermined
-                        }
-                    );
-                }
             }
             SequenceDomainCommand::Abort => todo!()
         }

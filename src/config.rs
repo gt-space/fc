@@ -1,6 +1,6 @@
 use std::{fmt, net::IpAddr};
 
-pub type BoardId = &'static str;
+type BoardId = &'static str;
 
 
 #[derive(Debug)]
