@@ -31,6 +31,8 @@ const SERVO_RECONNECT_RETRY_COUNT: u8 = 1;
 const SERVO_RECONNECT_TIMEOUT: Duration = Duration::from_millis(100);
 
 fn main() -> ! {
+  Command::new("rm").arg(SOCKET_PATH).output().unwrap();
+
   let dependency_check = Command::new("python3")
     .arg("-c")
     .arg("\"import common\"")
