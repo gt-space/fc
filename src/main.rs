@@ -11,9 +11,8 @@ use device::Mappings;
 use crate::{device::Devices, servo::ServoError, sequence::Sequences, state::Ingestible};
 use mmap_sync::synchronizer::Synchronizer;
 
-const INCOMING_SOCKET_ADDRESS: (&str, u16) = ("0.0.0.0", 4573);
-const SERVO_SOCKET_ADDRESS: (&str, u16) = ("192.168.1.10", 5025);
-const FC_SOCKET_ADDRESS: (&str, u16) = ("0.0.0.0", 0);
+const SERVO_SOCKET_ADDRESS: (&str, u16) = ("localhost", 5025);
+const FC_SOCKET_ADDRESS: (&str, u16) = ("0.0.0.0", 4573);
 const DEVICE_COMMAND_PORT: u16 = 8378;
 
 /// How quickly a sequence must read from the shared VehicleState before the
@@ -45,7 +44,7 @@ fn main() -> ! {
     _ => panic!("python3 and common module dependency check failed with error code"),
   };
 
-  let socket: UdpSocket = UdpSocket::bind(FC_SOCKET_ADDRESS).expect(&format!("Couldn't open port {} on IP address {}", INCOMING_SOCKET_ADDRESS.1, INCOMING_SOCKET_ADDRESS.0));
+  let socket: UdpSocket = UdpSocket::bind(FC_SOCKET_ADDRESS).expect(&format!("Couldn't open port {} on IP address {}", FC_SOCKET_ADDRESS.1, FC_SOCKET_ADDRESS.0));
   socket.set_nonblocking(true).expect("Cannot set incoming to non-blocking.");
   let command_socket: UnixDatagram = UnixDatagram::bind(SOCKET_PATH).expect(&format!("Could not open sequence command socket on path '{SOCKET_PATH}'."));
   command_socket.set_nonblocking(true).expect("Cannot set sequence command socket to non-blocking.");
