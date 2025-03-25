@@ -84,8 +84,6 @@ impl Devices {
 
     pub(crate) fn update_state(&mut self, telemetry: Vec<(SocketAddr, DataMessage)>, mappings: &Mappings, socket: &UdpSocket) {
         for (address, message) in telemetry {
-            println!("Received telemetry: {:?}", message);
-
             match message {
                 DataMessage::FlightHeartbeat => continue,
                 DataMessage::Ahrs(ref id, _) |

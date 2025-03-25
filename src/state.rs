@@ -28,7 +28,7 @@ impl<'a> Ingestible for DataMessage<'a> {
           process_ahrs_data(vehicle_state, datapoints.to_vec());
       },
       DataMessage::Bms(id, datapoint) => {
-          if !id.starts_with("ahrs") {
+          if !id.starts_with("bms") {
               println!("Detected a BMS data message without a BMS signature.");
           }
 
