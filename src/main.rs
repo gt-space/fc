@@ -1,4 +1,3 @@
-mod config;
 mod device;
 mod servo;
 mod state;
@@ -7,10 +6,10 @@ mod sequence;
 // TODO: Make VehicleState belong to flight instead of common?
 // TODO: ACTUALLY SET MMAP_PATH AND SOCKET_PATH IN COMMON.
 // TODO: Make a wrapper for printing out messages due to errors, instead of having annoying if let blocks.
-use std::{collections::HashMap, net::{SocketAddr, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::{Child, Command}, thread, time::Duration};
-use common::{comm::{FlightControlMessage, NodeMapping, Sequence}, sequence::{MMAP_PATH, SOCKET_PATH}};
-use state::Ingestible;
-use crate::{device::Devices, servo::ServoError};
+use std::{env, collections::HashMap, net::{SocketAddr, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::Command, thread, time::Duration};
+use common::{comm::{FlightControlMessage, Sequence}, sequence::{MMAP_PATH, SOCKET_PATH}};
+use device::Mappings;
+use crate::{device::Devices, servo::ServoError, sequence::Sequences, state::Ingestible};
 use mmap_sync::synchronizer::Synchronizer;
 
 const INCOMING_SOCKET_ADDRESS: (&str, u16) = ("0.0.0.0", 4573);
@@ -32,20 +31,19 @@ const SERVO_RECONNECT_RETRY_COUNT: u8 = 1;
 /// The TCP timeout for re-establishing connection with a disconnected servo.
 const SERVO_RECONNECT_TIMEOUT: Duration = Duration::from_millis(100);
 
-type BoardId = String;
-
 fn main() -> ! {
   let dependency_check = Command::new("python3")
-    .arg("-c \"import sequences\"")
+    .arg("-c")
+    .arg("\"import common\"")
     .output().unwrap()
     .status
     .code().unwrap();
 
   match dependency_check {
-    0 => println!("python3 and sequences module detected."),
-    1 => panic!("sequences module not detected."),
+    0 => println!("python3 and common module detected."),
+    1 => panic!("common module not detected."),
     127 => panic!("python3 not detected."),
-    _ => panic!("python3 and sequences module dependency check failed with error code {dependency_check}"),
+    _ => panic!("python3 and common module dependency check failed with error code"),
   };
 
   let socket: UdpSocket = UdpSocket::bind(FC_SOCKET_ADDRESS).expect(&format!("Couldn't open port {} on IP address {}", INCOMING_SOCKET_ADDRESS.1, INCOMING_SOCKET_ADDRESS.0));
@@ -53,9 +51,9 @@ fn main() -> ! {
   let command_socket: UnixDatagram = UnixDatagram::bind(SOCKET_PATH).expect(&format!("Could not open sequence command socket on path '{SOCKET_PATH}'."));
   command_socket.set_nonblocking(true).expect("Cannot set sequence command socket to non-blocking.");
 
-  let mut mappings: Vec<NodeMapping> = Vec::new();
+  let mut mappings: Mappings = Vec::new();
   let mut devices: Devices = Devices::new();
-  let mut sequences: HashMap<String, Child> = HashMap::new();
+  let mut sequences: Sequences = HashMap::new();
   let mut synchronizer: Synchronizer = Synchronizer::new(MMAP_PATH.as_ref());
   let mut abort_sequence: Option<Sequence> = None;
   
@@ -83,22 +81,10 @@ fn main() -> ! {
       println!("Recieved a FlightControlMessage: {command:#?}");
 
       match command {
-        FlightControlMessage::Abort => {
-          if let Some(ref sequence) = abort_sequence {
-            for (_, sequence) in &mut sequences {
-              if let Err(e) = sequence.kill() {
-                println!("Couldn't kill a sequence in preperation for abort, continuing normally: {e}");
-              }
-            }
-
-            sequence::execute(&mappings, sequence, &mut sequences);
-          } else {
-            println!("Received an abort command, but no abort sequence has been set. Continuing normally...");
-          }
-        },
-        FlightControlMessage::AhrsCommand(_) => todo!(),
-        FlightControlMessage::BmsCommand(_) => todo!(),
-        FlightControlMessage::Trigger(_) => todo!(),
+        FlightControlMessage::Abort => abort(&mappings, &mut sequences, &abort_sequence),
+        FlightControlMessage::AhrsCommand(c) => devices.send_ahrs_command(&socket, c),
+        FlightControlMessage::BmsCommand(c) => devices.send_bms_command(&socket, c),
+        FlightControlMessage::Trigger(_t) => todo!(),
         FlightControlMessage::Mappings(m) => mappings = m,
         FlightControlMessage::Sequence(s) if s.name == "abort" => abort_sequence = Some(s),
         FlightControlMessage::Sequence(ref s) => sequence::execute(&mappings, s, &mut sequences),
@@ -138,16 +124,29 @@ fn main() -> ! {
       }
     }
 
-    
-
     // sequences and triggers
-    // INVESTIGATE THIS FUNCTION
-    let sam_commands = sequence::pull_commands(&command_socket, &mappings, vehicle_state);
-    devices.send_sam_commands(&socket, sam_commands);
+    let sam_commands = sequence::pull_commands(&command_socket);
+    let should_abort = devices.send_sam_commands(&socket, &mappings, sam_commands);
+
+    if should_abort {
+      abort(&mappings, &mut sequences, &abort_sequence);
+    }
 
     // triggers
+  }
+}
 
-    // ...
+fn abort(mappings: &Mappings, sequences: &mut Sequences, abort_sequence: &Option<Sequence>) {
+  if let Some(ref sequence) = abort_sequence {
+    for (_, sequence) in &mut *sequences {
+      if let Err(e) = sequence.kill() {
+        println!("Couldn't kill a sequence in preperation for abort, continuing normally: {e}");
+      }
+    }
+
+    sequence::execute(&mappings, sequence, sequences);
+  } else {
+    println!("Received an abort command, but no abort sequence has been set. Continuing normally...");
   }
 }
 

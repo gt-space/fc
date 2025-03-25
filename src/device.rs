@@ -1,8 +1,10 @@
 use core::fmt;
 use std::{io, net::{IpAddr, SocketAddr, UdpSocket}, time::Instant};
-use common::comm::{ahrs, bms, flight::DataMessage, sam::SamControlMessage, NodeMapping, VehicleState};
+use common::comm::{ahrs, bms, flight::{DataMessage, SequenceDomainCommand}, sam::SamControlMessage, CompositeValveState, NodeMapping, ValveState, VehicleState};
 
 use crate::{Ingestible, DEVICE_COMMAND_PORT, TIME_TO_LIVE};
+
+pub(crate) type Mappings = Vec<NodeMapping>;
 
 #[derive(Clone)]
 pub(crate) struct Device {
@@ -80,7 +82,7 @@ impl Devices {
         }
     }
 
-    pub(crate) fn update_state(&mut self, telemetry: Vec<(SocketAddr, DataMessage)>, mappings: &Vec<NodeMapping>, socket: &UdpSocket) {
+    pub(crate) fn update_state(&mut self, telemetry: Vec<(SocketAddr, DataMessage)>, mappings: &Mappings, socket: &UdpSocket) {
         for (address, message) in telemetry {
             match message {
                 DataMessage::FlightHeartbeat => continue,
@@ -112,7 +114,8 @@ impl Devices {
         }
     }
 
-    fn serialize_and_send<T: serde::ser::Serialize>(&self, socket: &UdpSocket, destination: &String, message: &T) -> std::result::Result<(), String> {
+    /// Sends a message on a socket to a board with id `destination`
+    fn serialize_and_send<T: serde::ser::Serialize>(&self, socket: &UdpSocket, destination: &str, message: &T) -> std::result::Result<(), String> {
         let mut buf: [u8; 1024] = [0; 1024];
 
         let Some(device) = self.devices.iter().find(|d| d.id == *destination) else {
@@ -130,28 +133,45 @@ impl Devices {
         return Ok(())
     }
 
-    pub(crate) fn send_sam_commands(&mut self, socket: &UdpSocket, commands: Vec<(&String, SamControlMessage)>) {
-        for (destination, command) in commands {
-            if let Err(msg) = self.serialize_and_send(socket, destination, &command) {
-                println!("{}", msg);
-            }
+    ///
+    pub(crate) fn send_sam_commands(&mut self, socket: &UdpSocket, mappings: &Mappings, commands: Vec<SequenceDomainCommand>) -> bool {
+        let mut should_abort = false;
+        
+        for command in commands {
+            match command {
+                SequenceDomainCommand::ActuateValve { valve, state } => {
+                    let Some(mapping) = mappings.iter().find(|m| m.text_id == valve) else {
+                        eprintln!("Failed to actuate valve: mapping '{valve}' is not defined.");
+                        continue;
+                    };
+    
+                    let closed = state == ValveState::Closed;
+                    let normally_closed = mapping.normally_closed.unwrap_or(true);
+                    let powered = closed != normally_closed;
 
-            if let SamControlMessage::ActuateValve { channel, powered } = command {
-                if let Some(existing) = self.state.valve_states.get_mut(&valve) {
-                    existing.commanded = state;
-                } else {
-                    self.state.valve_states.insert(
-                        valve,
-                        CompositeValveState {
-                            commanded: state,
-                            actual: ValveState::Undetermined
-                        }
-                    );
+                    if let Some(existing) = self.state.valve_states.get_mut(&valve) {
+                        existing.commanded = state;
+                    } else {
+                        self.state.valve_states.insert(
+                            valve,
+                            CompositeValveState {
+                                commanded: state,
+                                actual: ValveState::Undetermined
+                            }
+                        );
+                    }
+
+                    let command = SamControlMessage::ActuateValve { channel: mapping.channel, powered };
+
+                    if let Err(msg) = self.serialize_and_send(socket, &mapping.board_id, &command) {
+                        println!("{}", msg);
+                    }
                 }
+                SequenceDomainCommand::Abort => should_abort = true,
             }
-
-            
         }
+
+        should_abort
     }
 
     pub(crate) fn send_bms_command(&self, socket: &UdpSocket, command: bms::Command) {

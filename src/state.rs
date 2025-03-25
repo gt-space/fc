@@ -1,5 +1,5 @@
-use common::comm::{ahrs, bms, flight::DataMessage, sam::{self, ChannelType, Unit}, CompositeValveState, Measurement, NodeMapping, SensorType, ValveState, VehicleState};
-use crate::MMAP_GRACE_PERIOD;
+use common::comm::{ahrs, bms, flight::DataMessage, sam::{self, ChannelType, Unit}, CompositeValveState, Measurement, SensorType, ValveState, VehicleState};
+use crate::{Mappings, MMAP_GRACE_PERIOD};
 use mmap_sync::synchronizer::{Synchronizer, SynchronizerError};
 
 pub(crate) fn sync_sequences(sync: &mut Synchronizer, state: &VehicleState) -> Result<(usize, bool), SynchronizerError> {
@@ -7,11 +7,11 @@ pub(crate) fn sync_sequences(sync: &mut Synchronizer, state: &VehicleState) -> R
 }
 
 pub(crate) trait Ingestible {
-  fn ingest(&self, vehicle_state: &mut VehicleState, mappings: &Vec<NodeMapping>);
+  fn ingest(&self, vehicle_state: &mut VehicleState, mappings: &Mappings);
 }
 
 impl<'a> Ingestible for DataMessage<'a> {
-  fn ingest(&self, vehicle_state: &mut VehicleState, mappings: &Vec<NodeMapping>) {
+  fn ingest(&self, vehicle_state: &mut VehicleState, mappings: &Mappings) {
     match self {
       DataMessage::Sam(id, datapoints) => {
           if !id.starts_with("sam") {
@@ -35,7 +35,7 @@ impl<'a> Ingestible for DataMessage<'a> {
           process_bms_data(vehicle_state, *datapoint.to_owned());
       },
       DataMessage::FlightHeartbeat | DataMessage::Identity(_) => {},
-  }
+    }
   }
 }
 
@@ -50,7 +50,7 @@ pub(crate) fn process_ahrs_data(state: &mut VehicleState, datapoints: Vec<ahrs::
 }
 
 // TODO: Optimize this function?
-pub(crate) fn process_sam_data(board_id: &str, state: &mut VehicleState, datapoints: Vec<sam::DataPoint>, mappings: &Vec<NodeMapping>) {
+pub(crate) fn process_sam_data(board_id: &str, state: &mut VehicleState, datapoints: Vec<sam::DataPoint>, mappings: &Mappings) {
   for data_point in datapoints {
     for mapping in mappings {
       let corresponds = data_point.channel == mapping.channel

@@ -1,7 +1,10 @@
-use common::comm::{sam::SamControlMessage, CompositeValveState, NodeMapping, SensorType, Sequence, ValveState, VehicleState, flight::SequenceDomainCommand};
+use common::comm::{SensorType, Sequence, flight::SequenceDomainCommand};
 use std::{collections::HashMap, io, os::unix::net::UnixDatagram, process::{Child, Command}};
+use crate::Mappings;
 
-fn run(mappings: &Vec<NodeMapping>, sequence: &Sequence) -> io::Result<Child> {
+pub(crate) type Sequences = HashMap<String, Child>;
+
+fn run(mappings: &Mappings, sequence: &Sequence) -> io::Result<Child> {
     let mut script = String::from("from common import *;");
     for mapping in mappings {
         let definition = match mapping.sensor_type {
@@ -18,7 +21,7 @@ fn run(mappings: &Vec<NodeMapping>, sequence: &Sequence) -> io::Result<Child> {
         .spawn()
 }
 
-pub(crate) fn execute(mappings: &Vec<NodeMapping>, sequence: &Sequence, sequences: &mut HashMap<String, Child>) {
+pub(crate) fn execute(mappings: &Mappings, sequence: &Sequence, sequences: &mut Sequences) {
     if let Some(running) = sequences.get_mut(&sequence.name) {
         match running.try_wait() {
             Ok(Some(_)) => {},
@@ -44,7 +47,7 @@ pub(crate) fn execute(mappings: &Vec<NodeMapping>, sequence: &Sequence, sequence
     sequences.insert(sequence.name.clone(), process);
 }
 
-pub(crate) fn kill(sequences: &mut HashMap<String, Child>, name: &String) -> io::Result<()> {
+pub(crate) fn kill(sequences: &mut Sequences, name: &String) -> io::Result<()> {
     let sequence = match sequences.get_mut(name) {
         Some(c) => {
             if let Ok(Some(_)) = c.try_wait() {
@@ -63,7 +66,7 @@ pub(crate) fn kill(sequences: &mut HashMap<String, Child>, name: &String) -> io:
     sequence.kill()
 }
 
-pub(crate) fn pull_commands<'a>(socket: &UnixDatagram, mappings: &'a Vec<NodeMapping>) -> Vec<(&'a str, SamControlMessage)> {
+pub(crate) fn pull_commands<'a>(socket: &UnixDatagram) -> Vec<SequenceDomainCommand> {
     let mut buf: [u8; 1024] = [0; 1024];
     let mut commands = Vec::new();
 
@@ -85,27 +88,7 @@ pub(crate) fn pull_commands<'a>(socket: &UnixDatagram, mappings: &'a Vec<NodeMap
             }
         };
 
-        match command {
-            SequenceDomainCommand::ActuateValve { valve, state } => {
-                let Some(mapping) = mappings.iter().find(|m| m.text_id == valve) else {
-                    eprintln!("Failed to actuate valve: mapping '{valve}' is not defined.");
-                    continue;
-                };
-
-                let closed = state == ValveState::Closed;
-                let normally_closed = mapping.normally_closed.unwrap_or(true);
-                let powered = closed != normally_closed;
-
-                commands.push((
-                    &mapping.board_id[..],
-                    SamControlMessage::ActuateValve {
-                        channel: mapping.channel,
-                        powered,
-                    }
-                ));
-            }
-            SequenceDomainCommand::Abort => todo!()
-        }
+        commands.push(command);
     }
 
     commands
