@@ -14,6 +14,7 @@ use mmap_sync::synchronizer::Synchronizer;
 const SERVO_SOCKET_ADDRESS: (&str, u16) = ("localhost", 5025);
 const FC_SOCKET_ADDRESS: (&str, u16) = ("0.0.0.0", 4573);
 const DEVICE_COMMAND_PORT: u16 = 8378;
+const SERVO_DATA_PORT: u16 = 7201;
 
 /// How quickly a sequence must read from the shared VehicleState before the
 /// data becomes corrupted.

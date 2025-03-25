@@ -2,6 +2,8 @@ use std::{fmt, io::{self, Read, Write}, net::{SocketAddr, TcpStream, ToSocketAdd
 use common::comm::{Computer, FlightControlMessage, VehicleState};
 use postcard::experimental::max_size::MaxSize;
 
+use crate::SERVO_DATA_PORT;
+
 type Result<T> = std::result::Result<T, ServoError>;
 
 #[derive(Debug)]
@@ -85,7 +87,7 @@ pub(crate) fn push(socket: &UdpSocket, servo_socket: SocketAddr, state: &Vehicle
     Err(e) => return Err(ServoError::DeserializationFailed(e)),
   };
 
-  match socket.send_to(&message, servo_socket) {
+  match socket.send_to(&message, (servo_socket.ip(), SERVO_DATA_PORT)) {
     Ok(s) => Ok(s),
     Err(e) => Err(ServoError::TransportFailed(e)),
   }
