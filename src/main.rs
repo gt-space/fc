@@ -3,9 +3,8 @@ mod servo;
 mod state;
 mod sequence;
 
-// TODO: Make VehicleState belong to flight instead of common?
-// TODO: ACTUALLY SET MMAP_PATH AND SOCKET_PATH IN COMMON.
-// TODO: Make a wrapper for printing out messages due to errors, instead of having annoying if let blocks.
+// TODO: Set multiple potential FC Socket addresses. make it so one address is the chosen one.
+// TODO: Clean up domain socket when done.
 use std::{env, collections::HashMap, net::{SocketAddr, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::Command, thread, time::Duration};
 use common::{comm::{FlightControlMessage, Sequence}, sequence::{MMAP_PATH, SOCKET_PATH}};
 use device::Mappings;
