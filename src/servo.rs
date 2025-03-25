@@ -80,7 +80,6 @@ pub(crate) fn pull(servo_stream: &mut TcpStream) -> Result<Option<FlightControlM
 
 // sends new VehicleState to servo. Refactor to use UDP
 pub(crate) fn push(socket: &UdpSocket, servo_socket: SocketAddr, state: &VehicleState) -> Result<usize> {
-  println!("{state:?}");
   
   let message = match postcard::to_allocvec(state) {
     Ok(v) => v,
