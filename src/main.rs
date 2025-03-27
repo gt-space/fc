@@ -5,10 +5,9 @@ mod sequence;
 
 // TODO: Make it so you enter servo's socket address.
 // TODO: Clean up domain socket on exit.
-use std::{env, collections::HashMap, net::{SocketAddr, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::Command, thread, time::Duration};
+use std::{collections::HashMap, env, net::{SocketAddr, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::Command, thread, time::Duration};
 use common::{comm::{FlightControlMessage, Sequence}, sequence::{MMAP_PATH, SOCKET_PATH}};
-use device::Mappings;
-use crate::{device::Devices, servo::ServoError, sequence::Sequences, state::Ingestible};
+use crate::{device::Devices, servo::ServoError, sequence::Sequences, state::Ingestible, device::Mappings};
 use mmap_sync::synchronizer::Synchronizer;
 
 const SERVO_SOCKET_ADDRESS: (&str, u16) = ("localhost", 5025);
@@ -31,21 +30,17 @@ const SERVO_RECONNECT_RETRY_COUNT: u8 = 1;
 const SERVO_RECONNECT_TIMEOUT: Duration = Duration::from_millis(100);
 
 fn main() -> ! {
-  Command::new("rm").arg(SOCKET_PATH).output().unwrap();
+  // Checks if all the python dependencies are in order.
+  if let Err(missing) = check_python_dependencies(&["common"]) {
+    let mut error_message = "The following packages are missing:".to_string();
 
-  let dependency_check = Command::new("python3")
-    .arg("-c")
-    .arg("\"import common\"")
-    .output().unwrap()
-    .status
-    .code().unwrap();
+    for dependency in missing {
+      error_message.push_str("\n\t");
+      error_message.push_str(dependency);
+    }
 
-  match dependency_check {
-    0 => println!("python3 and common module detected."),
-    1 => panic!("common module not detected."),
-    127 => panic!("python3 not detected."),
-    _ => panic!("python3 and common module dependency check failed with error code"),
-  };
+    panic!("{}", error_message);
+  }
 
   let socket: UdpSocket = UdpSocket::bind(FC_SOCKET_ADDRESS).expect(&format!("Couldn't open port {} on IP address {}", FC_SOCKET_ADDRESS.1, FC_SOCKET_ADDRESS.0));
   socket.set_nonblocking(true).expect("Cannot set incoming to non-blocking.");
@@ -195,4 +190,29 @@ fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr) 
       None
     }
   }
+}
+
+/// Checks if python3 and the passed python modules exist.
+fn check_python_dependencies<'a>(dependencies: &[&'a str]) -> Result<(), Vec<&'a str>> {
+  let mut imports = vec!["".to_string()];
+
+  for dependency in dependencies {
+    imports.push(format!("import {}", dependency));
+  }
+
+  let mut missing_imports = Vec::new();
+  for (i, statement) in imports.iter().enumerate() {
+    let dependency_check = Command::new("python3")
+      .args(["-c", statement.as_str()])
+      .output().unwrap()
+      .status.code().unwrap();
+
+    match dependency_check {
+      0 => {},
+      127 => return Err(vec!["python3"]),
+      _ => missing_imports.push(dependencies[i - 1]),
+    };
+  }
+
+  Ok(())
 }

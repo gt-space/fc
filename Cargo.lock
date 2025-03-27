@@ -95,7 +95,7 @@ checksum = "67ba02a97a2bd10f4b59b25c7973101c79642302776489e030cd13cdab09ed15"
 [[package]]
 name = "common"
 version = "0.1.0"
-source = "git+https://github.com/gt-space/luna.git?branch=dev%2Fflight2#efb6a007ffd7e77032a94289f85f729133e7cdde"
+source = "git+https://github.com/gt-space/luna.git?branch=dev%2Fflight2#9d727f0fe370c9179e7a41ff1bf74ce6cd7eb6c8"
 dependencies = [
  "bytecheck",
  "jeflog",
@@ -264,9 +264,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.21.1"
+version = "1.21.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d75b0bedcc4fe52caa0e03d9f1151a323e4aa5e2d78ba3580400cd3c9e2bc4bc"
+checksum = "c2806eaa3524762875e21c3dcd057bc4b7bfa01ce4da8d46be1cd43649e1cc6b"
 
 [[package]]
 name = "parking_lot"
