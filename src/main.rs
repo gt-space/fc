@@ -30,6 +30,8 @@ const SERVO_RECONNECT_RETRY_COUNT: u8 = 1;
 const SERVO_RECONNECT_TIMEOUT: Duration = Duration::from_millis(100);
 
 fn main() -> ! {
+  Command::new("rm").arg(SOCKET_PATH).output().unwrap();
+
   // Checks if all the python dependencies are in order.
   if let Err(missing) = check_python_dependencies(&["common"]) {
     let mut error_message = "The following packages are missing:".to_string();
