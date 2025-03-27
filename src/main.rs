@@ -56,6 +56,13 @@ fn main() -> ! {
   let mut abort_sequence: Option<Sequence> = None;
   
   println!("Flight Computer running on version {}\n", env!("CARGO_PKG_VERSION"));
+  println!("!!!! ATTENTION !!! ATTENTION !!!!");
+  println!(" THIS VERSION IS HIGHLY UNSTABLE ");
+  println!("!!!! ATTENTION !!! ATTENTION !!!!");
+  println!("DO NOT USE FOR ANYTHING DANGEROUS");
+  println!("!!!! ATTENTION !!! ATTENTION !!!!");
+  thread::sleep(Duration::from_secs(5));
+  println!("\nStarting...\n");
 
   let (mut servo_stream, mut servo_address)= loop {
     match servo::establish(SERVO_SOCKET_ADDRESS, 3, Duration::from_secs(2)) {
