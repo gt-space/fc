@@ -10,7 +10,9 @@ use common::{comm::{FlightControlMessage, Sequence}, sequence::{MMAP_PATH, SOCKE
 use crate::{device::Devices, servo::ServoError, sequence::Sequences, state::Ingestible, device::Mappings};
 use mmap_sync::synchronizer::Synchronizer;
 
-const SERVO_SOCKET_ADDRESS: (&str, u16) = ("localhost", 5025);
+const SERVO_SOCKET_ADDRESSES: [(&str, u16); 1] = [
+  ("localhost", 5025),
+];
 const FC_SOCKET_ADDRESS: (&str, u16) = ("0.0.0.0", 4573);
 const DEVICE_COMMAND_PORT: u16 = 8378;
 const SERVO_DATA_PORT: u16 = 7201;
@@ -65,7 +67,7 @@ fn main() -> ! {
   println!("\nStarting...\n");
 
   let (mut servo_stream, mut servo_address)= loop {
-    match servo::establish(SERVO_SOCKET_ADDRESS, 3, Duration::from_secs(2)) {
+    match servo::establish(&SERVO_SOCKET_ADDRESSES, 3, Duration::from_secs(2)) {
       Ok(s) => {
         println!("Connected to servo successfully. Beginning control cycle...\n");
         break s;
@@ -182,7 +184,7 @@ fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr) 
         ServoError::ServoDisconnected => {
           eprint!("Attempting to reconnect to servo... ");
 
-          match servo::establish(SERVO_SOCKET_ADDRESS, SERVO_RECONNECT_RETRY_COUNT, SERVO_RECONNECT_TIMEOUT) {
+          match servo::establish(&SERVO_SOCKET_ADDRESSES, SERVO_RECONNECT_RETRY_COUNT, SERVO_RECONNECT_TIMEOUT) {
             Ok(s) => {
               (*servo_stream, *servo_address) = s;
               eprintln!("Connection successfully re-established.");

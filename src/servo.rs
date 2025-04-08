@@ -23,7 +23,7 @@ impl fmt::Display for ServoError {
   }
 }
 
-pub(crate) fn establish(servo_addresses: &[&str], chances: u8, timeout: Duration) -> Result<(TcpStream, SocketAddr)> {
+pub(crate) fn establish(servo_addresses: &[impl ToSocketAddrs], chances: u8, timeout: Duration) -> Result<(TcpStream, SocketAddr)> {
   // buffer containing the serialized identity message to be sent to the control server
   let mut identity = [0; Computer::POSTCARD_MAX_SIZE];
 
@@ -32,34 +32,27 @@ pub(crate) fn establish(servo_addresses: &[&str], chances: u8, timeout: Duration
     return Err(ServoError::DeserializationFailed(error));
   }
 
-
   let mut fatal_error = io::ErrorKind::ConnectionRefused.into();
+  let resolved_addresses: Vec<SocketAddr> = servo_addresses.iter().map_while(|a| a.to_socket_addrs().ok()).flatten().collect();
+  for i in 1..=chances {
+    for addr in &resolved_addresses {
+      println!("[{i}]: Attempting connection with servo at {addr:?}...");
+  
+      match TcpStream::connect_timeout(addr, timeout) {
+        Ok(mut s) => {
+          s.set_nodelay(true).map_err(|e| ServoError::TransportFailed(e))?;
+          s.set_nonblocking(true).map_err(|e| ServoError::TransportFailed(e))?;
 
-  for address in servo_addresses {
-    let resolved_addresses: Vec<SocketAddr> = address
-    .to_socket_addrs()
-    .map_err(|e| ServoError::TransportFailed(e))?
-    .collect();
-    for i in 0..chances {
-      for addr in &resolved_addresses {
-        println!("[{}]: Attempting connection with servo at {addr:?}...", i + 1);
-    
-        match TcpStream::connect_timeout(addr, timeout) {
-          Ok(mut s) => {
-            s.set_nodelay(true).map_err(|e| ServoError::TransportFailed(e))?;
-            s.set_nonblocking(true).map_err(|e| ServoError::TransportFailed(e))?;
-
-            if let Err(e) = s.write_all(&identity) {
-              return Err(ServoError::TransportFailed(e));
-            } else {
-              return Ok((s, *addr));
-            }
-          },
-          Err(e) => fatal_error = e,
-        };
-      }
-    };
-  }
+          if let Err(e) = s.write_all(&identity) {
+            return Err(ServoError::TransportFailed(e));
+          } else {
+            return Ok((s, *addr));
+          }
+        },
+        Err(e) => fatal_error = e,
+      };
+    }
+  };
 
   Err(ServoError::TransportFailed(fatal_error))
 }
