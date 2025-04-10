@@ -1,8 +1,8 @@
 use core::fmt;
-use std::{io, net::{IpAddr, SocketAddr, UdpSocket}, time::Instant};
-use common::comm::{ahrs, bms, flight::{DataMessage, SequenceDomainCommand}, sam::SamControlMessage, CompositeValveState, NodeMapping, ValveState, VehicleState};
+use std::{collections::HashMap, io, net::{IpAddr, SocketAddr, UdpSocket}, time::{Duration, Instant}};
+use common::comm::{ahrs, bms, flight::{DataMessage, SequenceDomainCommand}, sam::SamControlMessage, CompositeValveState, NodeMapping, Statistics, ValveState, VehicleState};
 
-use crate::{Ingestible, DEVICE_COMMAND_PORT, TIME_TO_LIVE};
+use crate::{Ingestible, DECAY, DEVICE_COMMAND_PORT, TIME_TO_LIVE};
 
 pub(crate) type Mappings = Vec<NodeMapping>;
 
@@ -57,12 +57,13 @@ impl Device {
 pub(crate) struct Devices {
     devices: Vec<Device>,
     state: VehicleState,
+    last_updates: HashMap<String, Instant>,
 }
 
 impl Devices {
     /// Creates an empty set to hold Devices
     pub(crate) fn new() -> Self {
-        Devices { devices: Vec::new(), state: VehicleState::new() }
+        Devices { devices: Vec::new(), state: VehicleState::new(), last_updates: HashMap::new(), }
     }
 
     /// Inserts a device into the set, overwriting an existing device.
@@ -82,6 +83,25 @@ impl Devices {
         }
     }
 
+    /// should be ran whenever data is sent
+    /// TODO: INTEGRATE THIS WITH THE MAIN DATA
+    pub(crate) fn update_last_updates(&mut self) {
+        let now = Instant::now();
+
+        for (name, stats) in &mut self.state.rolling {
+            if !self.last_updates.contains_key(name.as_str()) {
+                continue;
+            }
+
+            let last_update_time = *self.last_updates
+                .get(name.as_str())
+                .expect("Already checked if it existed. This should not happen.");
+
+            stats.time_since_last_update = now.duration_since(last_update_time).as_secs_f64();
+        }
+    }
+
+    /// Updates the VehicleState struct with the newly recieved board telemetry
     pub(crate) fn update_state(&mut self, telemetry: Vec<(SocketAddr, DataMessage)>, mappings: &Mappings, socket: &UdpSocket) {
         for (address, message) in telemetry {
             match message {
@@ -93,6 +113,35 @@ impl Devices {
                         println!("Received data from a device that hasn't been registered. Ignoring...");
                         continue;
                     };
+
+                    // TODO: Comment out moving averages
+                    let now = Instant::now();
+                    let mut delta_time = Duration::new(0, 0);
+
+                    match self.last_updates.get_mut(id) {
+                        Some(last_update) => {
+                            delta_time = now - *last_update;
+                            *last_update = now;
+                        }
+                        None => { self.last_updates.insert(id.clone(), now); }
+                    };
+                    
+
+                    match self.state.rolling.get_mut(id) {
+                        Some(stat) => {
+                            stat.rolling_average = stat.rolling_average.mul_f64(DECAY)
+                              + delta_time.mul_f64(1.0 - DECAY);
+                            stat.delta_time = delta_time;
+                        }
+                        None => {
+                            self.state.rolling.insert(
+                                id.clone(),
+                                Statistics {
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                    }
 
                     device.reset_timer();
                 },
@@ -109,7 +158,7 @@ impl Devices {
                     continue;
                 }
             }
-
+            
             message.ingest(&mut self.state, mappings);
         }
     }

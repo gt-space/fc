@@ -26,13 +26,17 @@ const MMAP_GRACE_PERIOD: Duration = Duration::from_millis(20);
 
 /// How long from the last received message before a board is considered
 /// disconnected.
-const TIME_TO_LIVE: Duration = Duration::from_millis(50);
+const TIME_TO_LIVE: Duration = Duration::from_millis(150);
 
 /// How many times a reconnect will be tried with a disconnected servo.
 const SERVO_RECONNECT_RETRY_COUNT: u8 = 1;
 
 /// The TCP timeout for re-establishing connection with a disconnected servo.
 const SERVO_RECONNECT_TIMEOUT: Duration = Duration::from_millis(50);
+
+/// How often the refresh rate data decays over time.
+const DECAY: f64 = 0.9;
+
 
 fn main() -> ! {
   Command::new("rm").arg(SOCKET_PATH).output().unwrap();
@@ -105,6 +109,9 @@ fn main() -> ! {
         },
       };
     }
+
+    // updates records
+    devices.update_last_updates();
 
     // send servo the current vehicle telemetry
     if let Err(e) = servo::push(&socket, servo_address, devices.get_state()) {
