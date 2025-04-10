@@ -10,7 +10,10 @@ use common::{comm::{FlightControlMessage, Sequence}, sequence::{MMAP_PATH, SOCKE
 use crate::{device::Devices, servo::ServoError, sequence::Sequences, state::Ingestible, device::Mappings};
 use mmap_sync::synchronizer::Synchronizer;
 
-const SERVO_SOCKET_ADDRESSES: [(&str, u16); 1] = [
+const SERVO_SOCKET_ADDRESSES: [(&str, u16); 4] = [
+  ("192.168.1.10", 5025),
+  ("server-01.local", 5025),
+  ("server-02.local", 5025),
   ("localhost", 5025),
 ];
 const FC_SOCKET_ADDRESS: (&str, u16) = ("0.0.0.0", 4573);
@@ -29,7 +32,7 @@ const TIME_TO_LIVE: Duration = Duration::from_millis(50);
 const SERVO_RECONNECT_RETRY_COUNT: u8 = 1;
 
 /// The TCP timeout for re-establishing connection with a disconnected servo.
-const SERVO_RECONNECT_TIMEOUT: Duration = Duration::from_millis(100);
+const SERVO_RECONNECT_TIMEOUT: Duration = Duration::from_millis(50);
 
 fn main() -> ! {
   Command::new("rm").arg(SOCKET_PATH).output().unwrap();
