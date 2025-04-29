@@ -15,21 +15,21 @@ impl<'a> Ingestible for DataMessage<'a> {
     match self {
       DataMessage::Sam(id, datapoints) => {
           if !id.starts_with("sam") {
-              println!("Detected a SAM data message without a SAM signature.");
+            println!("Detected a SAM data message without a SAM signature.");
           }
           
           process_sam_data(id, vehicle_state, datapoints.to_vec(), mappings)
       },
       DataMessage::Ahrs(id, datapoints) => {
           if !id.starts_with("ahrs") {
-              println!("Detected an AHRS data message without an AHRS signature.");
+            println!("Detected an AHRS data message without an AHRS signature.");
           }
 
           process_ahrs_data(vehicle_state, datapoints.to_vec());
       },
       DataMessage::Bms(id, datapoint) => {
           if !id.starts_with("bms") {
-              println!("Detected a BMS data message without a BMS signature.");
+            println!("Detected a BMS data message without a BMS signature.");
           }
 
           process_bms_data(vehicle_state, *datapoint.to_owned());
@@ -174,10 +174,6 @@ pub(crate) fn process_sam_data(board_id: &str, state: &mut VehicleState, datapoi
             );
           }
 
-          println!(
-            "M: Value: {}, Unit: {}",
-            measurement.value, measurement.unit
-          );
           measurement
         }
       };

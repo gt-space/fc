@@ -86,7 +86,6 @@ fn main() -> ! {
     }
   };
   
-  
   loop {
     let servo_message = get_servo_data(&mut servo_stream, &mut servo_address);
 
@@ -98,7 +97,7 @@ fn main() -> ! {
         FlightControlMessage::Abort => abort(&mappings, &mut sequences, &abort_sequence),
         FlightControlMessage::AhrsCommand(c) => devices.send_ahrs_command(&socket, c),
         FlightControlMessage::BmsCommand(c) => devices.send_bms_command(&socket, c),
-        FlightControlMessage::Trigger(_t) => todo!(),
+        FlightControlMessage::Trigger(_) => todo!(),
         FlightControlMessage::Mappings(m) => mappings = m,
         FlightControlMessage::Sequence(s) if s.name == "abort" => abort_sequence = Some(s),
         FlightControlMessage::Sequence(ref s) => sequence::execute(&mappings, s, &mut sequences),
@@ -192,7 +191,7 @@ fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr) 
 
       match e {
         ServoError::ServoDisconnected => {
-          eprint!("Attempting to reconnect to servo... ");
+          eprintln!("Attempting to reconnect to servo... ");
 
           match servo::establish(&SERVO_SOCKET_ADDRESSES, SERVO_RECONNECT_RETRY_COUNT, SERVO_RECONNECT_TIMEOUT) {
             Ok(s) => {
