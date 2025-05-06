@@ -121,9 +121,9 @@ fn main() -> ! {
     devices.update_state(device::receive(&socket), &mappings, &socket);
 
     // updates all running sequences with the newest received data
-    //if let Err(e) = state::sync_sequences(&mut synchronizer, devices.get_state()) {
-    //  println!("There was an error in synchronizing vehicle state: {e}");
-    //}
+    if let Err(e) = state::sync_sequences(&mut synchronizer, devices.get_state()) {
+      println!("There was an error in synchronizing vehicle state: {e}");
+    }
 
     // Update board lifetimes and send heartbeats to connected boards.
     for device in devices.iter_mut() {
