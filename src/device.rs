@@ -215,7 +215,16 @@ impl Devices {
                     if let Err(msg) = self.serialize_and_send(socket, &mapping.board_id, &command) {
                         println!("{}", msg);
                     }
+                },
+
+                SequenceDomainCommand::ChangeAbortStage { sam_hostname, valve_states } => {
+                    let command = SamControlMessage::ChangeAbortStage { valve_states };
+
+                    if let Err(msg) = self.serialize_and_send(socket, &sam_hostname, &command) {
+                        println!("{}", msg);
+                    }
                 }
+
                 SequenceDomainCommand::Abort => should_abort = true,
             }
         }
