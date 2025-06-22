@@ -272,11 +272,13 @@ pub(crate) fn handshake(address: &SocketAddr, socket: &UdpSocket) -> Result<()> 
     Ok(())
 }
 
-/// Gets the most recent UDP Commands
+/// Gets the most recent board data over UDP
 pub(crate) fn receive(socket: &UdpSocket) -> Vec<(SocketAddr, DataMessage)> {
     let mut messages = Vec::new();
     let mut buf: [u8; 1024] = [0; 1024];
     
+    // keeps reading data until buffer is empty
+    // could this indefinitely hold if data collection was sped up?
     loop {
         let (size, address) = match socket.recv_from(&mut buf) {
             Ok(metadata) => metadata,
