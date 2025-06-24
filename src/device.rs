@@ -1,6 +1,6 @@
 use core::fmt;
 use std::{collections::HashMap, io, net::{IpAddr, SocketAddr, UdpSocket}, time::{Duration, Instant}};
-use common::comm::{ahrs, bms, flight::{DataMessage, SequenceDomainCommand}, sam::SamControlMessage, CompositeValveState, NodeMapping, Statistics, ValveState, VehicleState};
+use common::comm::{ahrs, bms, flight::{DataMessage, SequenceDomainCommand}, sam::SamControlMessage, CompositeValveState, NodeMapping, SensorType, Statistics, ValveState, VehicleState};
 
 use crate::{Ingestible, DECAY, DEVICE_COMMAND_PORT, TIME_TO_LIVE};
 
@@ -218,7 +218,24 @@ impl Devices {
                 },
 
                 SequenceDomainCommand::ChangeAbortStage { sam_hostname, valve_states } => {
-                    let command = SamControlMessage::ChangeAbortStage { valve_states };
+                    let mut powered: [bool; 6] = [false; 6];
+                    for (i, valve_state) in valve_states.iter().enumerate() {
+                        // if valve does not exist then keep powered[i] as false
+                        // if valve does exist then look at its normal state
+                        // i starts at 0 and channels start at 1, so use i+1
+                        if let Some(mapping) = mappings.iter().find(|m| m.board_id == sam_hostname 
+                            && m.sensor_type == SensorType::Valve
+                            && m.channel == (i + 1) as u32) {
+                            
+                            let closed = *valve_state == ValveState::Closed;
+                            let normally_closed = mapping.normally_closed.unwrap_or(true);
+                            powered[i] = closed != normally_closed;
+                        } else {
+                            eprintln!("No valve defined for {sam_hostname} Channel: {}", i+1)
+                        }
+                    }
+
+                    let command = SamControlMessage::ChangeAbortStage { valve_states: powered };
 
                     if let Err(msg) = self.serialize_and_send(socket, &sam_hostname, &command) {
                         println!("{}", msg);
