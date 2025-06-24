@@ -193,7 +193,10 @@ impl Devices {
                         eprintln!("Failed to actuate valve: mapping '{valve}' is not defined.");
                         continue;
                     };
-    
+                    //"closed" represents if we want to have this valve closed 
+                    //"state" represents the state that we want the valve to be in (open or closed)
+                    //"normally_closed" represents if the valve is normally closed
+                    //"powered" represents if the valve should be powered to achieve "state"
                     let closed = state == ValveState::Closed;
                     let normally_closed = mapping.normally_closed.unwrap_or(true);
                     let powered = closed != normally_closed;
