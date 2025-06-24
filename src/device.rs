@@ -227,7 +227,7 @@ impl Devices {
                             && m.sensor_type == SensorType::Valve
                             && m.channel == (i + 1) as u32) {
                             
-                            let closed = *valve_state == ValveState::Closed;
+                            let closed = *valve_state == 'C';
                             let normally_closed = mapping.normally_closed.unwrap_or(true);
                             powered[i] = closed != normally_closed;
                         } else {

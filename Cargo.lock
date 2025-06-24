@@ -101,7 +101,7 @@ checksum = "67ba02a97a2bd10f4b59b25c7973101c79642302776489e030cd13cdab09ed15"
 [[package]]
 name = "common"
 version = "0.1.0"
-source = "git+https://github.com/gt-space/luna.git?branch=dev%2FAVI-361-abort-stages-flight2#005c10337632a5b185d4b32c9532a8997d3a71da"
+source = "git+https://github.com/gt-space/luna.git?branch=dev%2FAVI-361-abort-stages-flight2#9547a587afd4195456d2015dd7ff780a80be2d15"
 dependencies = [
  "bytecheck",
  "jeflog",
