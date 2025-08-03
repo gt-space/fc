@@ -220,7 +220,7 @@ impl Devices {
                     }
                 },
 
-                SequenceDomainCommand::ChangeAbortStage { sam_hostname, valve_states } => {
+                SequenceDomainCommand::SetAbortStage { sam_hostname, valve_states } => {
                     let mut powered: [bool; 6] = [false; 6];
                     for (i, valve_state) in valve_states.iter().enumerate() {
                         // if valve does not exist then keep powered[i] as false
@@ -230,7 +230,7 @@ impl Devices {
                             && m.sensor_type == SensorType::Valve
                             && m.channel == (i + 1) as u32) {
                             
-                            let closed = *valve_state == 'C';
+                            let closed = *valve_state == ValveState::Closed;
                             let normally_closed = mapping.normally_closed.unwrap_or(true);
                             powered[i] = closed != normally_closed;
                         } else {
@@ -238,7 +238,7 @@ impl Devices {
                         }
                     }
 
-                    let command = SamControlMessage::ChangeAbortStage { valve_states: powered };
+                    let command = SamControlMessage::SetAbortStage { valve_states: powered };
 
                     if let Err(msg) = self.serialize_and_send(socket, &sam_hostname, &command) {
                         println!("{}", msg);
