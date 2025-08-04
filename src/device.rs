@@ -230,12 +230,6 @@ impl Devices {
                             continue;
                         };
 
-                        /// ensure we are actually on a valve
-                        if mapping.sensor_type != SensorType::Valve {
-                            eprintln!("'{}' is not a valve. Skipping abort configuration.", valve_name);
-                            continue;
-                        }
-
                         /// append this valve state to its SAM board vector
                         board_valves.entry(mapping.board_id.clone())
                             .or_insert_with(Vec::new)
@@ -243,21 +237,15 @@ impl Devices {
                     }
 
                     for (board_id, valves) in board_valves {
-                        /// retrieve abort valve states for this board_id SAM's valves, if they don't exist set to default array of all false
-                        let mut powered = self.state.abort_valve_states
-                            .entry(&board_id)
-                            .or_insert([false; 6]);
+                        let mut powered: Vec<(u32, bool)> = Vec::new();
 
                         for (channel, state) in valves {
-                            // TODO: redundant, mappings should already be valid. do we need this check?
-                            if channel >= 1 && channel <= 6 {
-                                let closed = state == ValveState::Closed;
-                                let normally_closed = mappings.iter()
-                                    .find(|m| m.channel == channel && m.board_id == board_id)
-                                    .and_then(|m| m.normally_closed)
-                                    .unwrap_or(true);
-                                powered[channel-1] = closed != normally_closed;
-                            }
+                            let closed = state == ValveState::Closed;
+                            let normally_closed = mappings.iter()
+                                .find(|m| m.channel == channel && m.board_id == board_id)
+                                .and_then(|m| m.normally_closed)
+                                .unwrap_or(true);
+                            powered.push((channel, closed != normally_closed));
                         }
 
                         /// create message 
