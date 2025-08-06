@@ -1,6 +1,6 @@
 use core::fmt;
 use std::{collections::HashMap, io, net::{IpAddr, SocketAddr, UdpSocket}, time::{Duration, Instant}};
-use common::comm::{ahrs, bms, flight::{DataMessage, SequenceDomainCommand}, sam::SamControlMessage, CompositeValveState, NodeMapping, SensorType, Statistics, ValveState, VehicleState};
+use common::{comm::{ahrs, bms, flight::{DataMessage, SequenceDomainCommand}, sam::SamControlMessage, CompositeValveState, NodeMapping, SensorType, Statistics, ValveState, VehicleState}, sequence::Sensor};
 
 use crate::{Ingestible, DECAY, DEVICE_COMMAND_PORT, TIME_TO_LIVE};
 
@@ -223,8 +223,10 @@ impl Devices {
                 SequenceDomainCommand::SetAbortStage { valve_states } => {
                     let mut valve_lookup: HashMap<String, (&str, u32, bool)> = HashMap::new();
                     for mapping in mappings {
+                        if mapping.sensor_type == SensorType::Valve {
                         let normally_closed = mapping.normally_closed.unwrap_or(true);
                         valve_lookup.insert(mapping.text_id.clone(), (&mapping.board_id, mapping.channel, normally_closed));
+                        }
                     }
 
                     /// stores [sam_board_id, (channel_num, powered)]. every valve that an operator set an abort config for
