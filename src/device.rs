@@ -224,8 +224,8 @@ impl Devices {
                     let mut valve_lookup: HashMap<String, (&str, u32, bool)> = HashMap::new();
                     for mapping in mappings {
                         if mapping.sensor_type == SensorType::Valve {
-                        let normally_closed = mapping.normally_closed.unwrap_or(true);
-                        valve_lookup.insert(mapping.text_id.clone(), (&mapping.board_id, mapping.channel, normally_closed));
+                            let normally_closed = mapping.normally_closed.unwrap_or(true);
+                            valve_lookup.insert(mapping.text_id.clone(), (&mapping.board_id, mapping.channel, normally_closed));
                         }
                     }
 
@@ -233,7 +233,7 @@ impl Devices {
                     let mut board_valves: HashMap<&str, Vec<(u32, bool)>> = HashMap::new();
                     for (valve_name, desired_state) in valve_states {
                         /// get the mapping for the current valve
-                        let Some((board_id, channel, normally_closed)) = valve_lookup.get(valve_name) 
+                        let Some(&(board_id, channel, normally_closed)) = valve_lookup.get(valve_name)
                         else {
                             eprintln!("Abort valve '{}' not found in mappings. Skipping.", valve_name);
                             continue;
