@@ -222,7 +222,7 @@ impl Devices {
 
                 SequenceDomainCommand::SetAbortStage { valve_states } => {
                     /// stores [valve_name, (channel_num, ValveState)]. every valve that an operator set an abort config for
-                    let mut board_valves: HashMap<String, Vec<(u32, ValveState)>> = HashMap::new();
+                    let mut board_valves: HashMap<String, Vec<(&NodeMapping, ValveState)>> = HashMap::new();
                     for (valve_name, desired_state) in valve_states {
                         /// get the mapping for the current valve
                         let Some(mapping) = mappings.iter().find(|m| m.text_id == valve_name) else {
@@ -233,19 +233,16 @@ impl Devices {
                         /// append this valve state to its SAM board vector
                         board_valves.entry(mapping.board_id.clone())
                             .or_insert_with(Vec::new)
-                            .push((mapping.channel, desired_state));
+                            .push((mapping, desired_state));
                     }
 
                     for (board_id, valves) in board_valves {
                         let mut powered: Vec<(u32, bool)> = Vec::new();
 
-                        for (channel, state) in valves {
+                        for (mapping, state) in valves {
                             let closed = state == ValveState::Closed;
-                            let normally_closed = mappings.iter()
-                                .find(|m| m.channel == channel && m.board_id == board_id)
-                                .and_then(|m| m.normally_closed)
-                                .unwrap_or(true);
-                            powered.push((channel, closed != normally_closed));
+                            let normally_closed = mapping.normally_closed.unwrap_or(true);
+                            powered.push((mapping.channel, closed != normally_closed));
                         }
 
                         /// create message 
