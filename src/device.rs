@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{collections::hash::map, io, net::{IpAddr, SocketAddr, UdpSocket}, time::{Duration, Instant}};
+use std::{collections::HashMap, io, net::{IpAddr, SocketAddr, UdpSocket}, time::{Duration, Instant}};
 use common::comm::{ahrs, bms, flight::{DataMessage, SequenceDomainCommand}, sam::SamControlMessage, CompositeValveState, NodeMapping, SensorType, Statistics, ValveState, VehicleState};
 
 use crate::{Ingestible, DECAY, DEVICE_COMMAND_PORT, TIME_TO_LIVE};
@@ -221,35 +221,38 @@ impl Devices {
                 },
 
                 SequenceDomainCommand::SetAbortStage { valve_states } => {
-                    /// stores [valve_name, (channel_num, ValveState)]. every valve that an operator set an abort config for
-                    let mut board_valves: HashMap<String, Vec<(&NodeMapping, ValveState)>> = HashMap::new();
+                    let mut valve_lookup: HashMap<String, (&str, u32, bool)> = HashMap::new();
+                    for mapping in mappings {
+                        let normally_closed = mapping.normally_closed.unwrap_or(true);
+                        valve_lookup.insert(mapping.text_id.clone(), (&mapping.board_id, mapping.channel, normally_closed));
+                    }
+
+                    /// stores [sam_board_id, (channel_num, powered)]. every valve that an operator set an abort config for
+                    let mut board_valves: HashMap<&str, Vec<(u32, bool)>> = HashMap::new();
                     for (valve_name, desired_state) in valve_states {
                         /// get the mapping for the current valve
-                        let Some(mapping) = mappings.iter().find(|m| m.text_id == valve_name) else {
+                        let Some((board_id, channel, normally_closed)) = valve_lookup.get(valve_name) 
+                        else {
                             eprintln!("Abort valve '{}' not found in mappings. Skipping.", valve_name);
                             continue;
                         };
 
-                        /// append this valve state to its SAM board vector
-                        board_valves.entry(mapping.board_id.clone())
+                        // determine if we want to give power to this valve
+                        let closed = desired_state == ValveState::Closed;
+                        let powered = closed != normally_closed;
+
+                        /// append our determination of whether to power this valve to its SAM board vector
+                         board_valves.entry(board_id.clone())
                             .or_insert_with(Vec::new)
-                            .push((mapping, desired_state));
+                            .push((channel, powered));
                     }
 
                     for (board_id, valves) in board_valves {
-                        let mut powered: Vec<(u32, bool)> = Vec::new();
+                        /// create message for this sam board
+                        let command = SamControlMessage::SetAbortStage { valve_states: valves };
 
-                        for (mapping, state) in valves {
-                            let closed = state == ValveState::Closed;
-                            let normally_closed = mapping.normally_closed.unwrap_or(true);
-                            powered.push((mapping.channel, closed != normally_closed));
-                        }
-
-                        /// create message 
-                        let command = SamControlMessage::SetAbortStage { valve_states: *powered };
-
-                        /// send message
-                        if let Err(msg) = self.serialize_and_send(socket, &board_id, &command) {
+                        /// send message to this sam board
+                        if let Err(msg) = self.serialize_and_send(socket, board_id, &command) {
                             println!("{}", msg);
                         } else {
                             println!("Sent abort state to SAM: {}", board_id);
