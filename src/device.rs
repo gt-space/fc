@@ -233,7 +233,7 @@ impl Devices {
                     let mut board_valves: HashMap<&str, Vec<(u32, bool)>> = HashMap::new();
                     for (valve_name, desired_state) in valve_states {
                         /// get the mapping for the current valve
-                        let Some(&(board_id, channel, normally_closed)) = valve_lookup.get(valve_name)
+                        let Some(&(board_id, channel, normally_closed)) = valve_lookup.get(&valve_name)
                         else {
                             eprintln!("Abort valve '{}' not found in mappings. Skipping.", valve_name);
                             continue;
