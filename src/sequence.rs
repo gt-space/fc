@@ -16,7 +16,7 @@ fn run(mappings: &Mappings, sequence: &Sequence) -> io::Result<Child> {
     }
     
     script.push_str(&sequence.script);
-    Command::new("python3")
+    Command::new("/home/ggeorge/gt-space/luna/common/.venv/bin/python3")
         .args(["-c", &script])
         .spawn()
 }
