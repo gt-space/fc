@@ -7,8 +7,8 @@ pub(crate) type Sequences = HashMap<String, Child>;
 fn run(mappings: &Mappings, sequence: &Sequence) -> io::Result<Child> {
     let mut script = String::from("from common import *;");
     
-    script.push_str("OPEN = ValveState.Open");
-    script.push_str("CLOSED = ValveState.Closed");
+    script.push_str("OPEN = ValveState.Open;");
+    script.push_str("CLOSED = ValveState.Closed;");
     
     for mapping in mappings {
         let definition = match mapping.sensor_type {
@@ -20,7 +20,7 @@ fn run(mappings: &Mappings, sequence: &Sequence) -> io::Result<Child> {
     }
     
     script.push_str(&sequence.script);
-    Command::new("/home/ggeorge/gt-space/luna/common/.venv/bin/python3")
+    Command::new("python3")
         .args(["-c", &script])
         .spawn()
 }
