@@ -63,6 +63,7 @@ fn main() -> ! {
   let mut sequences: Sequences = HashMap::new();
   let mut synchronizer: Synchronizer = Synchronizer::new(MMAP_PATH.as_ref());
   let mut abort_sequence: Option<Sequence> = None;
+  let mut aborted = false; // keep track of whether we have aborted or not
   
   println!("Flight Computer running on version {}\n", env!("CARGO_PKG_VERSION"));
   println!("!!!! ATTENTION !!! ATTENTION !!!!");
@@ -125,9 +126,18 @@ fn main() -> ! {
       println!("There was an error in synchronizing vehicle state: {e}");
     }
 
+    // Update 'aborted' variable if all devices are now connected
+    if aborted && devices.all_devices_connected() {
+      aborted = false;
+    }
+    
     // Update board lifetimes and send heartbeats to connected boards.
+    let mut aborted_this_iteration = false; // keep track of whether we have aborted this iteration or not
     for device in devices.iter_mut() {
-      if device.is_disconnected() {
+      if !aborted && device.is_disconnected() {
+        aborted = true;
+        aborted_this_iteration = true;
+        abort(&mappings, &mut sequences, &abort_sequence);
         continue;
       }
 
@@ -140,12 +150,14 @@ fn main() -> ! {
       }
     }
 
-    // sequences and triggers
     let sam_commands = sequence::pull_commands(&command_socket);
-    let should_abort = devices.send_sam_commands(&socket, &mappings, sam_commands);
+    if !aborted_this_iteration {
+      // sequences and triggers
+      let should_abort = devices.send_sam_commands(&socket, &mappings, sam_commands);
 
-    if should_abort {
-      abort(&mappings, &mut sequences, &abort_sequence);
+      if should_abort {
+        abort(&mappings, &mut sequences, &abort_sequence);
+      }
     }
 
     // triggers

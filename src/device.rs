@@ -83,6 +83,10 @@ impl Devices {
         }
     }
 
+    pub(crate) fn all_devices_connected(&self) -> bool {
+        self.devices.iter().all(|d| !(d.is_disconnected()))
+    }
+
     /// should be ran whenever data is sent
     /// TODO: INTEGRATE THIS WITH THE MAIN DATA
     pub(crate) fn update_last_updates(&mut self) {
