@@ -5,7 +5,7 @@ mod sequence;
 
 // TODO: Make it so you enter servo's socket address.
 // TODO: Clean up domain socket on exit.
-use std::{collections::HashMap, env, net::{SocketAddr, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::Command, thread, time::Duration};
+use std::{collections::HashMap, env, net::{SocketAddr, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::Command, thread, time::{Duration, Instant}};
 use common::{comm::{FlightControlMessage, Sequence}, sequence::{MMAP_PATH, SOCKET_PATH}};
 use crate::{device::Devices, servo::ServoError, sequence::Sequences, state::Ingestible, device::Mappings};
 use mmap_sync::synchronizer::Synchronizer;
@@ -36,6 +36,12 @@ const SERVO_RECONNECT_TIMEOUT: Duration = Duration::from_millis(50);
 
 /// How often the refresh rate data decays over time.
 const DECAY: f64 = 0.9;
+
+/// How often we want to update servo
+const FC_TO_SERVO_RATE: Duration = Duration::from_millis(1/50 * 1000);
+
+/// How often we want to send hearbeats
+const SEND_HEARTBEAT_RATE: Duration = Duration::from_millis(50);
 
 
 fn main() -> ! {
@@ -87,7 +93,8 @@ fn main() -> ! {
     }
   };
   
-  let mut telemetry_receive_count = 0;
+  let mut last_received = Instant::now(); // for sending messages to servo
+  let mut last_heartbeat_sent = Instant::now(); // for sending messages to boards
   loop {
     let servo_message = get_servo_data(&mut servo_stream, &mut servo_address);
 
@@ -114,16 +121,16 @@ fn main() -> ! {
     // updates records
     devices.update_last_updates();
 
-    if telemetry_receive_count != 0 {
+    if Instant::now().duration_since(last_received) > FC_TO_SERVO_RATE {
       // send servo the current vehicle telemetry
       if let Err(e) = servo::push(&socket, servo_address, devices.get_state()) {
         eprintln!("Issue in sending servo the vehicle telemetry: {e}");
       }
+      last_received = Instant::now();
     }
-    
+
     // receive telemetry
     let telemetry = device::receive(&socket);
-    telemetry_receive_count = telemetry.len();
 
     // process telemetry from boards
     devices.update_state(telemetry, &mappings, &socket);
@@ -138,6 +145,7 @@ fn main() -> ! {
       aborted = false;
     }
     
+    let need_to_send_heartbeat = Instant::now().duration_since(last_heartbeat_sent) > SEND_HEARTBEAT_RATE;
     // Update board lifetimes and send heartbeats to connected boards.
     let mut aborted_this_iteration = false; // keep track of whether we have aborted this iteration or not
     for device in devices.iter_mut() {
@@ -148,12 +156,15 @@ fn main() -> ! {
         continue;
       }
 
-      if let Err(e) = device.send_heartbeat(&socket) {
-        println!(
-          "There was an error in notifying board {} at IP {} that the FC is still connected: {e}", 
-          device.get_board_id(),
-          device.get_ip()
-        );
+      if need_to_send_heartbeat {
+        if let Err(e) = device.send_heartbeat(&socket) {
+          println!(
+            "There was an error in notifying board {} at IP {} that the FC is still connected: {e}", 
+            device.get_board_id(),
+            device.get_ip()
+          );
+        }
+        last_heartbeat_sent = Instant::now();
       }
     }
 
