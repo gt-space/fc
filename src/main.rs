@@ -87,6 +87,7 @@ fn main() -> ! {
     }
   };
   
+  let mut telemetry_receive_count = 0;
   loop {
     let servo_message = get_servo_data(&mut servo_stream, &mut servo_address);
 
@@ -113,13 +114,19 @@ fn main() -> ! {
     // updates records
     devices.update_last_updates();
 
-    // send servo the current vehicle telemetry
-    if let Err(e) = servo::push(&socket, servo_address, devices.get_state()) {
-      eprintln!("Issue in sending servo the vehicle telemetry: {e}");
+    if telemetry_receive_count != 0 {
+      // send servo the current vehicle telemetry
+      if let Err(e) = servo::push(&socket, servo_address, devices.get_state()) {
+        eprintln!("Issue in sending servo the vehicle telemetry: {e}");
+      }
     }
     
-    // receive and process telemetry from boards
-    devices.update_state(device::receive(&socket), &mappings, &socket);
+    // receive telemetry
+    let telemetry = device::receive(&socket);
+    telemetry_receive_count = telemetry.len();
+
+    // process telemetry from boards
+    devices.update_state(telemetry, &mappings, &socket);
 
     // updates all running sequences with the newest received data
     if let Err(e) = state::sync_sequences(&mut synchronizer, devices.get_state()) {
