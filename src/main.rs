@@ -154,8 +154,8 @@ fn main() -> ! {
             device.get_board_id(),
             device.get_ip()
           );
-          last_heartbeat_sent = Instant::now();
         }
+        last_heartbeat_sent = Instant::now();
       }
     }
 
