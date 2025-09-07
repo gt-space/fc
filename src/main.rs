@@ -40,6 +40,9 @@ const DECAY: f64 = 0.9;
 /// How often we want to update servo
 const FC_TO_SERVO_RATE: Duration = Duration::from_millis(1/50 * 1000);
 
+/// How often we want to send hearbeats
+const SEND_HEARTBEAT_RATE: Duration = Duration::from_millis(50);
+
 
 fn main() -> ! {
   Command::new("rm").arg(SOCKET_PATH).output().unwrap();
@@ -89,7 +92,8 @@ fn main() -> ! {
     }
   };
   
-  let mut last_received = Instant::now();
+  let mut last_received = Instant::now(); // for sending messages to servo
+  let mut last_heartbeat_sent = Instant::now(); // for sending messages to boards
   loop {
     let servo_message = get_servo_data(&mut servo_stream, &mut servo_address);
 
@@ -135,18 +139,23 @@ fn main() -> ! {
       println!("There was an error in synchronizing vehicle state: {e}");
     }
 
+
+    let need_to_send_heartbeat = Instant::now().duration_since(last_heartbeat_sent) > SEND_HEARTBEAT_RATE;
     // Update board lifetimes and send heartbeats to connected boards.
     for device in devices.iter_mut() {
       if device.is_disconnected() {
         continue;
       }
 
-      if let Err(e) = device.send_heartbeat(&socket) {
-        println!(
-          "There was an error in notifying board {} at IP {} that the FC is still connected: {e}", 
-          device.get_board_id(),
-          device.get_ip()
-        );
+      if need_to_send_heartbeat {
+        if let Err(e) = device.send_heartbeat(&socket) {
+          println!(
+            "There was an error in notifying board {} at IP {} that the FC is still connected: {e}", 
+            device.get_board_id(),
+            device.get_ip()
+          );
+          last_heartbeat_sent = Instant::now();
+        }
       }
     }
 
