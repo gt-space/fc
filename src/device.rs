@@ -83,6 +83,7 @@ impl Devices {
         }
     }
 
+    // Used to see if all devices that are registered are still connected
     pub(crate) fn all_devices_connected(&self) -> bool {
         self.devices.iter().all(|d| !(d.is_disconnected()))
     }
