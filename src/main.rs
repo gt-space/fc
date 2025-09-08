@@ -182,6 +182,7 @@ fn main() -> ! {
   }
 }
 
+// TODO: Figure out abort stages and whether to keep main abort sequence
 fn abort(mappings: &Mappings, sequences: &mut Sequences, abort_sequence: &Option<Sequence>) {
   if let Some(ref sequence) = abort_sequence {
     for (_, sequence) in &mut *sequences {
