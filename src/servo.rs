@@ -59,16 +59,32 @@ pub(crate) fn establish(servo_addresses: &[impl ToSocketAddrs], chances: u8, tim
 
 // "pull" new information from servo
 pub(crate) fn pull(servo_stream: &mut TcpStream) -> Result<Option<FlightControlMessage>> {
-  let mut buffer = vec![0; 1_000_000];
+  let mut buffer = vec![0; u16::MAX.into()];
+  let mut index: usize = 0;
 
-  match servo_stream.read(&mut buffer) {
-    Ok(s) if s == 0 => return Err(ServoError::ServoDisconnected),
-    Ok(s) => s,
-    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(None),
-    Err(e) => return Err(ServoError::TransportFailed(e))
-  };
+  while index < 2 {
+    index += match servo_stream.read(&mut buffer[index..]) {
+      Ok(s) if s == 0 => return Err(ServoError::ServoDisconnected),
+      Ok(s) => s,
+      Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+      Err(e) => return Err(ServoError::TransportFailed(e))
+    };
+  }
+  
+  let mut buf: [u8; 2] = [0; 2];
+  buf.copy_from_slice(&buffer[0..2]);
+  let size = u16::from_be_bytes(buf);
 
-  match postcard::from_bytes::<FlightControlMessage>(&buffer) {
+  while index < size as usize + 2 {
+    index += match servo_stream.read(&mut buffer[index..]) {
+      Ok(s) if s == 0 => return Err(ServoError::ServoDisconnected),
+      Ok(s) => s,
+      Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+      Err(e) => return Err(ServoError::TransportFailed(e))
+    };
+  }
+
+  match postcard::from_bytes::<FlightControlMessage>(&buffer[2..]) {
     Ok(m) => Ok(Some(m)),
     Err(e) => Err(ServoError::DeserializationFailed(e)),
   }
