@@ -11,6 +11,7 @@ pub(crate) enum ServoError {
   ServoDisconnected,
   TransportFailed(io::Error),
   DeserializationFailed(postcard::Error),
+  ServoMessageInTransitStill,
 }
 
 impl fmt::Display for ServoError {
@@ -19,6 +20,7 @@ impl fmt::Display for ServoError {
       Self::ServoDisconnected => write!(f, "Servo can't be reached or has disconnected."),
       Self::DeserializationFailed(e) => write!(f, "postcard encountered an error during message deserialization: {e}"),
       Self::TransportFailed(e) => write!(f, "The Servo transport layer raised an error: {e}"),
+      Self::ServoMessageInTransitStill => write!(f, "The last message from servo is still in transit."),
     }
   }
 }
@@ -58,19 +60,30 @@ pub(crate) fn establish(servo_addresses: &[impl ToSocketAddrs], chances: u8, tim
 }
 
 // "pull" new information from servo
-pub(crate) fn pull(servo_stream: &mut TcpStream) -> Result<Option<FlightControlMessage>> {
+pub(crate) fn pull(servo_stream: &mut TcpStream, previous_bytes_read: usize) -> (Result<Option<FlightControlMessage>>, usize) {
   let mut buffer = vec![0; 1_000_000];
 
-  match servo_stream.read(&mut buffer) {
-    Ok(s) if s == 0 => return Err(ServoError::ServoDisconnected),
-    Ok(s) => s,
-    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(None),
-    Err(e) => return Err(ServoError::TransportFailed(e))
+  let mut bytes_read = 0;
+  let mut still_reading = false;
+  match servo_stream.peek(&mut buffer) {
+    Ok(s) if s == 0 && previous_bytes_read == 0 => return (Err(ServoError::ServoDisconnected), 0),
+    Ok(s) => {
+      bytes_read = s; // number of bytes read. there could still be more bytes in transit that were not ready for us to read
+      still_reading = s != previous_bytes_read; // if the number of bytes that we read is not the same as the previously read amount, message still coming in. else, we have read completely, can serialize
+      s
+    },
+    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return (Ok(None), 0),
+    Err(e) => return (Err(ServoError::TransportFailed(e)), 0)
   };
 
-  match postcard::from_bytes::<FlightControlMessage>(&buffer) {
-    Ok(m) => Ok(Some(m)),
-    Err(e) => Err(ServoError::DeserializationFailed(e)),
+  // had a previously (potential) unfinished message, have confirmed it is finished
+  if still_reading {
+    return (Err(ServoError::ServoMessageInTransitStill), previous_bytes_read + bytes_read);
+  } else {
+    match postcard::from_bytes::<FlightControlMessage>(&buffer) {
+      Ok(m) => (Ok(Some(m)), bytes_read),
+      Err(e) => (Err(ServoError::DeserializationFailed(e)), bytes_read),
+    }
   }
 }
 
