@@ -59,14 +59,14 @@ pub(crate) fn establish(servo_addresses: &[impl ToSocketAddrs], chances: u8, tim
 
 // "pull" new information from servo
 pub(crate) fn pull(servo_stream: &mut TcpStream) -> Result<Option<FlightControlMessage>> {
-  let mut buffer = vec![0; u16::MAX.into()];
+  let mut buffer = vec![0; u16::MAX as usize + 2];
   let mut index: usize = 0;
 
   while index < 2 {
     index += match servo_stream.read(&mut buffer[index..]) {
       Ok(s) if s == 0 => return Err(ServoError::ServoDisconnected),
       Ok(s) => s,
-      Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+      Err(ref e) if e.kind() == io::ErrorKind::WouldBlock && index == 0 => return Ok(None),
       Err(e) => return Err(ServoError::TransportFailed(e))
     };
   }
@@ -79,7 +79,7 @@ pub(crate) fn pull(servo_stream: &mut TcpStream) -> Result<Option<FlightControlM
     index += match servo_stream.read(&mut buffer[index..]) {
       Ok(s) if s == 0 => return Err(ServoError::ServoDisconnected),
       Ok(s) => s,
-      Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+      Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => 0,
       Err(e) => return Err(ServoError::TransportFailed(e))
     };
   }
