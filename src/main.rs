@@ -93,10 +93,10 @@ fn main() -> ! {
   
   let mut last_received = Instant::now(); // for sending messages to servo
   let mut last_heartbeat_sent = Instant::now(); // for sending messages to boards
-  let mut prev_read_bytes_servo: usize  = 0; // amount of bytes that were read from servo
+  let mut prev_read_bytes_from_servo: usize  = 0; // amount of bytes that were read from servo on the last read
   loop {
-    let servo_message = get_servo_data(&mut servo_stream, &mut servo_address, prev_read_bytes_servo);
-    prev_read_bytes_servo = servo_message.1;
+    let servo_message = get_servo_data(&mut servo_stream, &mut servo_address, prev_read_bytes_from_servo);
+    prev_read_bytes_from_servo = servo_message.1; // update this from when we read
 
     // decoding servo message, if it was received
     if let Some(command) = servo_message.0 {
@@ -207,7 +207,7 @@ fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr, 
   match servo::pull(servo_stream, previously_read_bytes) {
     (Ok(message), bytes_read) => (message, bytes_read),
     (Err(e), bytes_read) => {
-      match e {
+      match e { // our message may not been retrieved completely, we will do another check to ensure we see no more bytes
         ServoError::ServoMessageInTransitStill => {
           eprintln!("Servo message still in transit.");
           ()

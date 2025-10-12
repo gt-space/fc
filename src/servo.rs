@@ -63,10 +63,10 @@ pub(crate) fn establish(servo_addresses: &[impl ToSocketAddrs], chances: u8, tim
 pub(crate) fn pull(servo_stream: &mut TcpStream, previous_bytes_read: usize) -> (Result<Option<FlightControlMessage>>, usize) {
   let mut buffer = vec![0; 1_000_000];
 
-  let mut bytes_read = 0;
-  let mut still_reading = false;
-  match servo_stream.peek(&mut buffer) {
-    Ok(s) if s == 0 && previous_bytes_read == 0 => return (Err(ServoError::ServoDisconnected), 0),
+  let mut bytes_read = 0; // bytes that are read in this iteration
+  let mut still_reading = false; // determination of whether we need to read from the buffer again
+  match servo_stream.peek(&mut buffer) { // peek so we aren't emptying buffer, just copying contents
+    Ok(s) if s == 0 && previous_bytes_read == 0 => return (Err(ServoError::ServoDisconnected), 0), 
     Ok(s) => {
       bytes_read = s; // number of bytes read. there could still be more bytes in transit that were not ready for us to read
       still_reading = s != previous_bytes_read; // if the number of bytes that we read is not the same as the previously read amount, message still coming in. else, we have read completely, can serialize
@@ -78,8 +78,12 @@ pub(crate) fn pull(servo_stream: &mut TcpStream, previous_bytes_read: usize) -> 
 
   // had a previously (potential) unfinished message, have confirmed it is finished
   if still_reading {
-    return (Err(ServoError::ServoMessageInTransitStill), previous_bytes_read + bytes_read);
+    return (Err(ServoError::ServoMessageInTransitStill),  bytes_read);
   } else {
+    // empty the read buffer now 
+    let mut emptying_buf = vec![0; previous_bytes_read];
+    servo_stream.read(&mut emptying_buf);
+    // serialize and return
     match postcard::from_bytes::<FlightControlMessage>(&buffer) {
       Ok(m) => (Ok(Some(m)), bytes_read),
       Err(e) => (Err(ServoError::DeserializationFailed(e)), bytes_read),
