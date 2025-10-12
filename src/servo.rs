@@ -59,7 +59,7 @@ pub(crate) fn establish(servo_addresses: &[impl ToSocketAddrs], chances: u8, tim
 
 // "pull" new information from servo
 pub(crate) fn pull(servo_stream: &mut TcpStream) -> Result<Option<FlightControlMessage>> {
-  let mut buffer = vec![0; 3_000];
+  let mut buffer = vec![0; 1_000_000];
 
   match servo_stream.read(&mut buffer) {
     Ok(s) if s == 0 => return Err(ServoError::ServoDisconnected),

@@ -38,7 +38,7 @@ const SERVO_RECONNECT_TIMEOUT: Duration = Duration::from_millis(50);
 const DECAY: f64 = 0.9;
 
 /// How often we want to update servo
-const FC_TO_SERVO_RATE: Duration = Duration::from_millis(1/50 * 1000);
+const FC_TO_SERVO_RATE: Duration = Duration::from_millis(10);
 
 /// How often we want to send hearbeats
 const SEND_HEARTBEAT_RATE: Duration = Duration::from_millis(50);
