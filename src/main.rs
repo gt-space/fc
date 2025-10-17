@@ -43,6 +43,9 @@ const FC_TO_SERVO_RATE: Duration = Duration::from_millis(10);
 /// How often we want to send hearbeats
 const SEND_HEARTBEAT_RATE: Duration = Duration::from_millis(50);
 
+/// If we do not hear from servo for this amount of time, we abort
+const SERVO_TO_FC_TIME_TO_LIVE: Duration = Duration::from_secs(60 * 10); // times 10 for 10 minutes
+
 
 fn main() -> ! {
   Command::new("rm").arg(SOCKET_PATH).output().unwrap();
@@ -79,10 +82,12 @@ fn main() -> ! {
   thread::sleep(Duration::from_secs(5));
   println!("\nStarting...\n");
 
+  let mut last_received_from_servo = Instant::now(); // last time that we had an established connection with servo
   let (mut servo_stream, mut servo_address)= loop {
     match servo::establish(&SERVO_SOCKET_ADDRESSES, 3, Duration::from_secs(2)) {
       Ok(s) => {
         println!("Connected to servo successfully. Beginning control cycle...\n");
+        last_received_from_servo = Instant::now();
         break s;
       },
       Err(e) => {
@@ -92,10 +97,15 @@ fn main() -> ! {
     }
   };
   
-  let mut last_received = Instant::now(); // for sending messages to servo
+  let mut last_sent_to_servo = Instant::now(); // for sending messages to servo
   let mut last_heartbeat_sent = Instant::now(); // for sending messages to boards
   loop {
-    let servo_message = get_servo_data(&mut servo_stream, &mut servo_address);
+    let servo_message = get_servo_data(&mut servo_stream, &mut servo_address, &mut last_received_from_servo);
+
+    // if we haven't heard from servo in over 10 minutes, abort.
+    if Instant::now().duration_since(last_received_from_servo) > SERVO_TO_FC_TIME_TO_LIVE {
+      abort(&mappings, &mut sequences, &abort_sequence);
+    }
 
     // decoding servo message, if it was received
     if let Some(command) = servo_message {
@@ -120,12 +130,12 @@ fn main() -> ! {
     // updates records
     devices.update_last_updates();
 
-    if Instant::now().duration_since(last_received) > FC_TO_SERVO_RATE {
+    if Instant::now().duration_since(last_sent_to_servo) > FC_TO_SERVO_RATE {
       // send servo the current vehicle telemetry
       if let Err(e) = servo::push(&socket, servo_address, devices.get_state()) {
         eprintln!("Issue in sending servo the vehicle telemetry: {e}");
       }
-      last_received = Instant::now();
+      last_sent_to_servo = Instant::now();
     }
 
     // receive telemetry
@@ -202,9 +212,12 @@ fn abort(mappings: &Mappings, sequences: &mut Sequences, abort_sequence: &Option
 /// 
 /// ## Transport Layer failed
 /// If reading from servo_stream is not possible, None will be returned.
-fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr) -> Option<FlightControlMessage> {
+fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr, last_received_from_servo: &mut Instant) -> Option<FlightControlMessage> {
   match servo::pull(servo_stream) {
-    Ok(message) => message,
+    Ok(message) => {
+      *last_received_from_servo = Instant::now();
+      message
+    },
     Err(e) => {
       eprintln!("Issue in pulling data from Servo: {e}");
 
@@ -215,6 +228,7 @@ fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr) 
           match servo::establish(&SERVO_SOCKET_ADDRESSES, SERVO_RECONNECT_RETRY_COUNT, SERVO_RECONNECT_TIMEOUT) {
             Ok(s) => {
               (*servo_stream, *servo_address) = s;
+              *last_received_from_servo = Instant::now();
               eprintln!("Connection successfully re-established.");
             },
             Err(e) => {
