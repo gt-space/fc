@@ -38,6 +38,24 @@ pub(crate) fn establish(servo_addresses: &[impl ToSocketAddrs], prev_connected_s
   }
 
   let mut fatal_error = io::ErrorKind::ConnectionRefused.into();
+  if prev_addr_exists {
+    let addr = prev_connected_servo_addr.unwrap();
+    println!("Attempting connection with servo at {addr:?}...");
+  
+        match TcpStream::connect_timeout(addr, timeout) {
+          Ok(mut s) => {
+            s.set_nodelay(true).map_err(|e| ServoError::TransportFailed(e))?;
+            s.set_nonblocking(true).map_err(|e| ServoError::TransportFailed(e))?;
+
+            if let Err(e) = s.write_all(&identity) {
+              return Err(ServoError::TransportFailed(e));
+            } else {
+              return Ok((s, *addr));
+            }
+          },
+          Err(e) => fatal_error = e,
+        };
+  }
   let resolved_addresses: Vec<SocketAddr> = servo_addresses.iter().filter_map(|a| a.to_socket_addrs().ok()).flatten().collect();
   for i in 1..=chances {
     for addr in &resolved_addresses {
