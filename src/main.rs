@@ -84,7 +84,7 @@ fn main() -> ! {
 
   let mut last_received_from_servo = Instant::now(); // last time that we had an established connection with servo
   let (mut servo_stream, mut servo_address)= loop {
-    match servo::establish(&SERVO_SOCKET_ADDRESSES, 3, Duration::from_secs(2)) {
+    match servo::establish(&SERVO_SOCKET_ADDRESSES, None, 3, Duration::from_secs(2)) {
       Ok(s) => {
         println!("Connected to servo successfully. Beginning control cycle...\n");
         last_received_from_servo = Instant::now();
@@ -225,7 +225,7 @@ fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr, 
         ServoError::ServoDisconnected => {
           eprintln!("Attempting to reconnect to servo... ");
 
-          match servo::establish(&SERVO_SOCKET_ADDRESSES, SERVO_RECONNECT_RETRY_COUNT, SERVO_RECONNECT_TIMEOUT) {
+          match servo::establish(&SERVO_SOCKET_ADDRESSES, Some(servo_address), SERVO_RECONNECT_RETRY_COUNT, Duration::from_millis(10)) {
             Ok(s) => {
               (*servo_stream, *servo_address) = s;
               *last_received_from_servo = Instant::now();
