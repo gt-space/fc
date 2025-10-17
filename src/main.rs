@@ -43,6 +43,7 @@ const FC_TO_SERVO_RATE: Duration = Duration::from_millis(10);
 /// How often we want to send hearbeats
 const SEND_HEARTBEAT_RATE: Duration = Duration::from_millis(50);
 
+
 fn main() -> ! {
   Command::new("rm").arg(SOCKET_PATH).output().unwrap();
 
@@ -93,13 +94,11 @@ fn main() -> ! {
   
   let mut last_received = Instant::now(); // for sending messages to servo
   let mut last_heartbeat_sent = Instant::now(); // for sending messages to boards
-  let mut prev_read_bytes_from_servo: usize  = 0; // amount of bytes that were read from servo on the last read
   loop {
-    let servo_message = get_servo_data(&mut servo_stream, &mut servo_address, prev_read_bytes_from_servo);
-    prev_read_bytes_from_servo = servo_message.1; // update this from when we read
+    let servo_message = get_servo_data(&mut servo_stream, &mut servo_address);
 
     // decoding servo message, if it was received
-    if let Some(command) = servo_message.0 {
+    if let Some(command) = servo_message {
       println!("Recieved a FlightControlMessage: {command:#?}");
 
       match command {
@@ -203,17 +202,14 @@ fn abort(mappings: &Mappings, sequences: &mut Sequences, abort_sequence: &Option
 /// 
 /// ## Transport Layer failed
 /// If reading from servo_stream is not possible, None will be returned.
-fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr, previously_read_bytes: usize) -> (Option<FlightControlMessage>, usize) {
-  match servo::pull(servo_stream, previously_read_bytes) {
-    (Ok(message), bytes_read) => (message, bytes_read),
-    (Err(e), bytes_read) => {
-      match e { // our message may not been retrieved completely, we will do another check to ensure we see no more bytes
-        ServoError::ServoMessageInTransitStill => {
-          eprintln!("Servo message still in transit.");
-          ()
-        }
+fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr) -> Option<FlightControlMessage> {
+  match servo::pull(servo_stream) {
+    Ok(message) => message,
+    Err(e) => {
+      eprintln!("Issue in pulling data from Servo: {e}");
+
+      match e {
         ServoError::ServoDisconnected => {
-          eprintln!("Issue in pulling data from Servo: {e}");
           eprintln!("Attempting to reconnect to servo... ");
 
           match servo::establish(&SERVO_SOCKET_ADDRESSES, SERVO_RECONNECT_RETRY_COUNT, SERVO_RECONNECT_TIMEOUT) {
@@ -226,11 +222,11 @@ fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr, 
             },
           };
         },
-        ServoError::DeserializationFailed(_) => {eprintln!("Issue in pulling data from Servo: {e}");},
-        ServoError::TransportFailed(_) => {eprintln!("Issue in pulling data from Servo: {e}");},
+        ServoError::DeserializationFailed(_) => {},
+        ServoError::TransportFailed(_) => {},
       };
     
-      (None, bytes_read) 
+      None
     }
   }
 }

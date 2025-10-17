@@ -11,7 +11,6 @@ pub(crate) enum ServoError {
   ServoDisconnected,
   TransportFailed(io::Error),
   DeserializationFailed(postcard::Error),
-  ServoMessageInTransitStill,
 }
 
 impl fmt::Display for ServoError {
@@ -20,7 +19,6 @@ impl fmt::Display for ServoError {
       Self::ServoDisconnected => write!(f, "Servo can't be reached or has disconnected."),
       Self::DeserializationFailed(e) => write!(f, "postcard encountered an error during message deserialization: {e}"),
       Self::TransportFailed(e) => write!(f, "The Servo transport layer raised an error: {e}"),
-      Self::ServoMessageInTransitStill => write!(f, "The last message from servo is still in transit."),
     }
   }
 }
