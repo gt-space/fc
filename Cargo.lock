@@ -95,7 +95,7 @@ checksum = "67ba02a97a2bd10f4b59b25c7973101c79642302776489e030cd13cdab09ed15"
 [[package]]
 name = "common"
 version = "0.1.0"
-source = "git+https://github.com/gt-space/luna.git?branch=dev%2Fflight2#9d727f0fe370c9179e7a41ff1bf74ce6cd7eb6c8"
+source = "git+https://github.com/gt-space/luna.git?branch=dev%2F10-min-abort-fc2#7263b446686a1623fedbe5cf7f1e1bf25537ede1"
 dependencies = [
  "bytecheck",
  "jeflog",

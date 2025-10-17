@@ -99,12 +99,14 @@ fn main() -> ! {
   
   let mut last_sent_to_servo = Instant::now(); // for sending messages to servo
   let mut last_heartbeat_sent = Instant::now(); // for sending messages to boards
+  let mut aborted = false;
   loop {
-    let servo_message = get_servo_data(&mut servo_stream, &mut servo_address, &mut last_received_from_servo);
+    let servo_message = get_servo_data(&mut servo_stream, &mut servo_address, &mut last_received_from_servo, &mut aborted);
 
     // if we haven't heard from servo in over 10 minutes, abort.
-    if Instant::now().duration_since(last_received_from_servo) > SERVO_TO_FC_TIME_TO_LIVE {
-      abort(&mappings, &mut sequences, &abort_sequence);
+    if (!aborted) && (Instant::now().duration_since(last_received_from_servo) > SERVO_TO_FC_TIME_TO_LIVE) {
+      aborted = true;
+      devices.send_sam_safe_valves(&socket);
     }
 
     // decoding servo message, if it was received
@@ -212,7 +214,7 @@ fn abort(mappings: &Mappings, sequences: &mut Sequences, abort_sequence: &Option
 /// 
 /// ## Transport Layer failed
 /// If reading from servo_stream is not possible, None will be returned.
-fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr, last_received_from_servo: &mut Instant) -> Option<FlightControlMessage> {
+fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr, last_received_from_servo: &mut Instant, aborted: &mut bool) -> Option<FlightControlMessage> {
   match servo::pull(servo_stream) {
     Ok(message) => {
       *last_received_from_servo = Instant::now();
@@ -229,6 +231,7 @@ fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr, 
             Ok(s) => {
               (*servo_stream, *servo_address) = s;
               *last_received_from_servo = Instant::now();
+              *aborted = false;
               eprintln!("Connection successfully re-established.");
             },
             Err(e) => {

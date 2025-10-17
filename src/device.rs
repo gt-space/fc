@@ -223,6 +223,18 @@ impl Devices {
         should_abort
     }
 
+    // send SafeValves messages to sams
+    pub(crate) fn send_sam_safe_valves(&self, socket: &UdpSocket) {
+        for device in self.devices.iter() {
+            if device.get_board_id().contains("sam") {
+                let command = SamControlMessage::SafeValves { };
+                if let Err(msg) = self.serialize_and_send(socket, device.get_board_id(), &command) {
+                        println!("{}", msg);
+                }
+            }
+        }
+    }
+
     pub(crate) fn send_bms_command(&self, socket: &UdpSocket, command: bms::Command) {
         let Some(bms) = self.devices.iter().find(|d| d.id.starts_with("bms")) else {
             println!("Couldn't send a BMS command as BMS isn't connected.");
