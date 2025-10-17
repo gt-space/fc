@@ -226,7 +226,7 @@ impl Devices {
     // send SafeValves messages to sams
     pub(crate) fn send_sam_safe_valves(&self, socket: &UdpSocket) {
         for device in self.devices.iter() {
-            if device.get_board_id().contains("sam") {
+            if device.get_board_id().starts_with("sam") {
                 let command = SamControlMessage::SafeValves { };
                 if let Err(msg) = self.serialize_and_send(socket, device.get_board_id(), &command) {
                         println!("{}", msg);
