@@ -179,8 +179,8 @@ fn main() -> ! {
           );
         }
         last_heartbeat_sent = Instant::now();
-        if mapping_has_prvnt && !sent_prvnt_sam_msg {
-          devices.send_sam_prvnt_safe(&socket, &mappings, &mut sent_prvnt_sam_msg);
+        if device.get_board_id().starts_with("sam") && mapping_has_prvnt && !sent_prvnt_sam_msg {
+          devices.send_sam_prvnt_safe(&socket, &mappings, &mut sent_prvnt_sam_msg, device.get_board_id());
         }
       }
     }

@@ -235,19 +235,21 @@ impl Devices {
         }
     }
 
-    pub(crate) fn send_sam_prvnt_safe(&self, socket: &UdpSocket, mappings: &Mappings, prvnt_msg_sent: &mut bool) {
+    pub(crate) fn send_sam_prvnt_safe(&self, socket: &UdpSocket, mappings: &Mappings, prvnt_msg_sent: &mut bool, board_id: &std::string::String) {
         // find prvnt if it exists
         let Some(prvnt_mapping) = mappings.iter().find(|m| m.text_id == "PRVNT") else {
               eprintln!("PRVNT not found");
               return
         };
-        let command = SamControlMessage::PRVNTSafing { channel: prvnt_mapping.channel};
-        if let Err(msg) = self.serialize_and_send(socket, &prvnt_mapping.board_id, &command) {
-                println!("{}", msg);
-                return;
+        if *board_id == prvnt_mapping.board_id {
+            let command = SamControlMessage::PRVNTSafing { channel: prvnt_mapping.channel};
+            if let Err(msg) = self.serialize_and_send(socket, &prvnt_mapping.board_id, &command) {
+                    println!("{}", msg);
+                    return;
+            }
+            *prvnt_msg_sent = true;
+            println!("PRVNT channel found on {} and message has been sent.", prvnt_mapping.board_id);
         }
-        *prvnt_msg_sent = true;
-        println!("PRVNT channel found on {} and message has been sent.", prvnt_mapping.board_id);
     }
 
     pub(crate) fn send_sam_clear_prvnt_channel(&self, socket: &UdpSocket, mappings: &Mappings) {
