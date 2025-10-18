@@ -118,7 +118,10 @@ fn main() -> ! {
         FlightControlMessage::AhrsCommand(c) => devices.send_ahrs_command(&socket, c),
         FlightControlMessage::BmsCommand(c) => devices.send_bms_command(&socket, c),
         FlightControlMessage::Trigger(_) => todo!(),
-        FlightControlMessage::Mappings(m) => mappings = m,
+        FlightControlMessage::Mappings(m) => {
+          mappings = m;
+          devices.send_sam_prvnt_safe(&socket, &mappings);
+        },
         FlightControlMessage::Sequence(s) if s.name == "abort" => abort_sequence = Some(s),
         FlightControlMessage::Sequence(ref s) => sequence::execute(&mappings, s, &mut sequences),
         FlightControlMessage::StopSequence(n) => {

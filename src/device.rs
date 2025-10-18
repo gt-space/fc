@@ -235,6 +235,18 @@ impl Devices {
         }
     }
 
+    pub(crate) fn send_sam_prvnt_safe(&self, socket: &UdpSocket, mappings: &Mappings) {
+        // find prvnt if it exists
+        let Some(prvnt_mapping) = mappings.iter().find(|m| m.text_id == "PRVNT") else {
+              eprintln!("PRVNT not found");
+              return
+        };
+        let command = SamControlMessage::PRVNTSafing { channel: prvnt_mapping.channel};
+        if let Err(msg) = self.serialize_and_send(socket, &prvnt_mapping.board_id, &command) {
+                println!("{}", msg);
+        }
+    }
+
     pub(crate) fn send_bms_command(&self, socket: &UdpSocket, command: bms::Command) {
         let Some(bms) = self.devices.iter().find(|d| d.id.starts_with("bms")) else {
             println!("Couldn't send a BMS command as BMS isn't connected.");
