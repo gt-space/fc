@@ -100,6 +100,8 @@ fn main() -> ! {
   let mut last_sent_to_servo = Instant::now(); // for sending messages to servo
   let mut last_heartbeat_sent = Instant::now(); // for sending messages to boards
   let mut aborted = false;
+  let mut mapping_has_prvnt = false;
+  let mut sent_prvnt_sam_msg = false;
   loop {
     let servo_message = get_servo_data(&mut servo_stream, &mut servo_address, &mut last_received_from_servo, &mut aborted);
 
@@ -120,7 +122,13 @@ fn main() -> ! {
         FlightControlMessage::Trigger(_) => todo!(),
         FlightControlMessage::Mappings(m) => {
           mappings = m;
-          devices.send_sam_prvnt_safe(&socket, &mappings);
+          mapping_has_prvnt = mappings.iter().any(|m| m.text_id == "PRVNT");
+          sent_prvnt_sam_msg = false;
+          // send clear message to sams. this is needed in case we move PRVNT to a different sam on the new mappings
+          // as the old mapped sam will still think it has prvnt. we also need to sent the prvnt msg to the newly mapped
+          // prvnt sam (if it exists)
+          // still need to figure out when to send messages when devices connect
+          devices.send_sam_clear_prvnt_channel(&socket, &mappings);
         },
         FlightControlMessage::Sequence(s) if s.name == "abort" => abort_sequence = Some(s),
         FlightControlMessage::Sequence(ref s) => sequence::execute(&mappings, s, &mut sequences),
@@ -157,7 +165,7 @@ fn main() -> ! {
 
     let need_to_send_heartbeat = Instant::now().duration_since(last_heartbeat_sent) > SEND_HEARTBEAT_RATE;
     // Update board lifetimes and send heartbeats to connected boards.
-    for device in devices.iter_mut() {
+    for device in devices.iter() {
       if device.is_disconnected() {
         continue;
       }
@@ -171,6 +179,9 @@ fn main() -> ! {
           );
         }
         last_heartbeat_sent = Instant::now();
+        if mapping_has_prvnt && !sent_prvnt_sam_msg {
+          devices.send_sam_prvnt_safe(&socket, &mappings, &mut sent_prvnt_sam_msg);
+        }
       }
     }
 
