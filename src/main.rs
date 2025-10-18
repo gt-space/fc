@@ -26,7 +26,7 @@ const MMAP_GRACE_PERIOD: Duration = Duration::from_millis(20);
 
 /// How long from the last received message before a board is considered
 /// disconnected.
-const TIME_TO_LIVE: Duration = Duration::from_millis(650);
+const TIME_TO_LIVE: Duration = Duration::from_millis(350);
 
 /// How many times a reconnect will be tried with a disconnected servo.
 const SERVO_RECONNECT_RETRY_COUNT: u8 = 1;
