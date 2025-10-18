@@ -26,7 +26,7 @@ const MMAP_GRACE_PERIOD: Duration = Duration::from_millis(20);
 
 /// How long from the last received message before a board is considered
 /// disconnected.
-const TIME_TO_LIVE: Duration = Duration::from_millis(650);
+const TIME_TO_LIVE: Duration = Duration::from_millis(350);
 
 /// How many times a reconnect will be tried with a disconnected servo.
 const SERVO_RECONNECT_RETRY_COUNT: u8 = 1;
@@ -230,7 +230,7 @@ fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr, 
         ServoError::ServoDisconnected => {
           eprintln!("Attempting to reconnect to servo... ");
 
-          match servo::establish(&SERVO_SOCKET_ADDRESSES, Some(servo_address), SERVO_RECONNECT_RETRY_COUNT, Duration::from_millis(50)) {
+          match servo::establish(&SERVO_SOCKET_ADDRESSES, Some(servo_address), SERVO_RECONNECT_RETRY_COUNT, SERVO_RECONNECT_TIMEOUT) {
             Ok(s) => {
               (*servo_stream, *servo_address) = s;
               *last_received_from_servo = Instant::now();
