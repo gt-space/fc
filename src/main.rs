@@ -162,7 +162,6 @@ fn main() -> ! {
       println!("There was an error in synchronizing vehicle state: {e}");
     }
 
-
     let need_to_send_heartbeat = Instant::now().duration_since(last_heartbeat_sent) > SEND_HEARTBEAT_RATE;
     // Update board lifetimes and send heartbeats to connected boards.
     for device in devices.iter() {
@@ -171,7 +170,7 @@ fn main() -> ! {
       }
 
       if need_to_send_heartbeat {
-        if let Err(e) = device.send_heartbeat(&socket) {
+        if let Err(e) = device.send_heartbeat(&socket, &devices, &mappings) {
           println!(
             "There was an error in notifying board {} at IP {} that the FC is still connected: {e}", 
             device.get_board_id(),
@@ -179,10 +178,11 @@ fn main() -> ! {
           );
         }
         last_heartbeat_sent = Instant::now();
-        if device.get_board_id().starts_with("sam") && mapping_has_prvnt && !sent_prvnt_sam_msg {
-          devices.send_sam_prvnt_safe(&socket, &mappings, &mut sent_prvnt_sam_msg, device.get_board_id());
-        }
       }
+    }
+
+    for device in devices.iter_mut() {
+      device.set_first_heartbeat_var(false);
     }
 
     // sequences and triggers
