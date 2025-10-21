@@ -129,6 +129,7 @@ fn main() -> ! {
           // prvnt sam (if it exists)
           // still need to figure out when to send messages when devices connect
           devices.send_sam_clear_prvnt_channel(&socket, &mappings);
+          // need to send prvnt mapping to sam board again if mappings change while everything is up
         },
         FlightControlMessage::Sequence(s) if s.name == "abort" => abort_sequence = Some(s),
         FlightControlMessage::Sequence(ref s) => sequence::execute(&mappings, s, &mut sequences),
