@@ -12,11 +12,12 @@ pub(crate) struct Device {
     id: String,
     address: SocketAddr,
     last_recieved: Instant,
+    first_heartbeat: bool, //NEW CHANGE
 }
 
 impl Device {
     fn new(id: String, address: SocketAddr) -> Self {
-        Device { id, address, last_recieved: Instant::now() }
+        Device { id, address, last_recieved: Instant::now(), first_heartbeat: true }
     }
 
     /// Should be ran whenever data is received from a board to update.
@@ -28,16 +29,42 @@ impl Device {
         self.last_recieved = Instant::now();
     }
 
-    pub(crate) fn send_heartbeat(&self, socket: &UdpSocket) -> Result<()> {
+    pub(crate) fn send_heartbeat(&self, socket: &UdpSocket, devices: &Devices, mappings: &Mappings) -> Result<()> {
         let mut buf: [u8; 1024] = [0; 1024];
         let serialized = postcard::to_slice(&DataMessage::FlightHeartbeat, &mut buf)
             .map_err(|e| Error::SerializationFailed(e))?;
         socket.send_to(serialized, self.address).map_err(|e| Error::TransportFailed(e))?;
+        
+        if self.first_heartbeat {
+            if self.get_board_id().starts_with("sam") {
+                self.send_sam_prvnt_safe(&socket, &mappings, self.get_board_id(), devices);
+            }
+        }
+
         Ok(())
     }
 
     pub(crate) fn is_disconnected(&self) -> bool {
         Instant::now().duration_since(self.last_recieved) > TIME_TO_LIVE
+    }
+
+    /// Sends a message on a socket to a board with id `destination`
+    fn serialize_and_send<T: serde::ser::Serialize>(&self, socket: &UdpSocket, destination: &str, message: &T, devices: &Devices) -> std::result::Result<(), String> {
+        let mut buf: [u8; 1024] = [0; 1024];
+
+        let Some(device) = devices.iter().find(|d| d.id == *destination) else {
+            return Err("Tried to sent a message to a board that hasn't been connected yet.".to_string());
+        };
+
+        if let Err(e) = postcard::to_slice::<T>(message, &mut buf) {
+            return Err(format!("Couldn't serialize message: {e}"));
+        };
+
+        if let Err(e) = device.send(socket, &buf) {
+            return Err(format!("Couldn't send message to {destination}: {e}"));
+        };
+
+        return Ok(())
     }
 
     /// Sends data to the device via a given socket.
@@ -46,12 +73,32 @@ impl Device {
         Ok(())
     }
 
+    pub(crate) fn send_sam_prvnt_safe(&self, socket: &UdpSocket, mappings: &Mappings, board_id: &std::string::String, devices: &Devices) {
+        // find prvnt if it exists
+        let Some(prvnt_mapping) = mappings.iter().find(|m| m.text_id == "PRVNT") else {
+              eprintln!("PRVNT not found");
+              return
+        };
+        if *board_id == prvnt_mapping.board_id {
+            let command = SamControlMessage::PRVNTSafing { channel: prvnt_mapping.channel};
+            if let Err(msg) = self.serialize_and_send(socket, &prvnt_mapping.board_id, &command, devices) {
+                    println!("{}", msg);
+                    return;
+            }
+            println!("PRVNT channel found on {} and message has been sent.", prvnt_mapping.board_id);
+        }
+    }
+
     pub(crate) fn get_board_id(&self) -> &String {
         &self.id
     }
 
     pub(crate) fn get_ip(&self) -> IpAddr {
         self.address.ip()
+    }
+
+    pub(crate) fn set_first_heartbeat_var(&mut self, value: bool) {
+        self.first_heartbeat = value;
     }
 }
 
@@ -295,6 +342,19 @@ impl Devices {
         should_abort
     }
 
+    pub(crate) fn send_sam_clear_prvnt_channel(&self, socket: &UdpSocket, mappings: &Mappings) {
+        for device in self.devices.iter() {
+            if device.get_board_id().starts_with("sam") {
+                let command = SamControlMessage::ClearPRVNTMsg { };
+                if let Err(msg) = self.serialize_and_send(socket, device.get_board_id(), &command) {
+                        println!("{}", msg);
+                } else {
+                    println!("Cleared PRVNT channel mappings in SAM memory");
+                }
+            }
+        }
+    }
+
     // send SafeValves messages to sams
     pub(crate) fn send_sam_safe_valves(&self, socket: &UdpSocket) {
         for device in self.devices.iter() {
@@ -335,6 +395,10 @@ impl Devices {
     
     pub(crate) fn iter_mut(&mut self) -> ::core::slice::IterMut<'_, Device> {
         self.devices.iter_mut()
+    }
+
+    pub(crate) fn iter(&self) -> ::core::slice::Iter<'_, Device> {
+        self.devices.iter()
     }
 }
 

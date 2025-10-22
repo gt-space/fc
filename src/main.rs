@@ -104,6 +104,8 @@ fn main() -> ! {
   let mut last_sent_to_servo = Instant::now(); // for sending messages to servo
   let mut last_heartbeat_sent = Instant::now(); // for sending messages to boards
   let mut aborted = false;
+  let mut mapping_has_prvnt = false;
+  let mut sent_prvnt_sam_msg = false;
   loop {
     let servo_message = get_servo_data(&mut servo_stream, &mut servo_address, &mut last_received_from_servo, &mut aborted);
 
@@ -122,7 +124,17 @@ fn main() -> ! {
         FlightControlMessage::AhrsCommand(c) => devices.send_ahrs_command(&socket, c),
         FlightControlMessage::BmsCommand(c) => devices.send_bms_command(&socket, c),
         FlightControlMessage::Trigger(_) => todo!(),
-        FlightControlMessage::Mappings(m) => mappings = m,
+        FlightControlMessage::Mappings(m) => {
+          mappings = m;
+          mapping_has_prvnt = mappings.iter().any(|m| m.text_id == "PRVNT");
+          sent_prvnt_sam_msg = false;
+          // send clear message to sams. this is needed in case we move PRVNT to a different sam on the new mappings
+          // as the old mapped sam will still think it has prvnt. we also need to sent the prvnt msg to the newly mapped
+          // prvnt sam (if it exists)
+          // still need to figure out when to send messages when devices connect
+          devices.send_sam_clear_prvnt_channel(&socket, &mappings);
+          // need to send prvnt mapping to sam board again if mappings change while everything is up
+        },
         FlightControlMessage::Sequence(s) if s.name == "abort" => abort_sequence = Some(s),
         FlightControlMessage::Sequence(ref s) => sequence::execute(&mappings, s, &mut sequences),
         FlightControlMessage::StopSequence(n) => {
@@ -155,16 +167,15 @@ fn main() -> ! {
       println!("There was an error in synchronizing vehicle state: {e}");
     }
 
-
     let need_to_send_heartbeat = Instant::now().duration_since(last_heartbeat_sent) > SEND_HEARTBEAT_RATE;
     // Update board lifetimes and send heartbeats to connected boards.
-    for device in devices.iter_mut() {
+    for device in devices.iter() {
       if device.is_disconnected() {
         continue;
       }
 
       if need_to_send_heartbeat {
-        if let Err(e) = device.send_heartbeat(&socket) {
+        if let Err(e) = device.send_heartbeat(&socket, &devices, &mappings) {
           println!(
             "There was an error in notifying board {} at IP {} that the FC is still connected: {e}", 
             device.get_board_id(),
@@ -173,6 +184,10 @@ fn main() -> ! {
         }
         last_heartbeat_sent = Instant::now();
       }
+    }
+
+    for device in devices.iter_mut() {
+      device.set_first_heartbeat_var(false);
     }
 
     // sequences and triggers
