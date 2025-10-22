@@ -1,10 +1,11 @@
 use core::fmt;
 use std::{collections::HashMap, io, net::{IpAddr, SocketAddr, UdpSocket}, time::{Duration, Instant}};
-use common::comm::{ahrs, bms, flight::{DataMessage, SequenceDomainCommand}, sam::SamControlMessage, CompositeValveState, NodeMapping, Statistics, ValveState, VehicleState};
+use common::comm::{ahrs, bms, flight::{DataMessage, SequenceDomainCommand}, sam::SamControlMessage, AbortStage, CompositeValveState, NodeMapping, SensorType, Statistics, ValveAction, ValveState, VehicleState};
 
 use crate::{Ingestible, DECAY, DEVICE_COMMAND_PORT, TIME_TO_LIVE};
 
 pub(crate) type Mappings = Vec<NodeMapping>;
+pub(crate) type AbortStages = Vec<AbortStage>;
 
 #[derive(Clone)]
 pub(crate) struct Device {
@@ -183,7 +184,7 @@ impl Devices {
     }
 
     ///
-    pub(crate) fn send_sam_commands(&mut self, socket: &UdpSocket, mappings: &Mappings, commands: Vec<SequenceDomainCommand>) -> bool {
+    pub(crate) fn send_sam_commands(&mut self, socket: &UdpSocket, mappings: &Mappings, commands: Vec<SequenceDomainCommand>, abort_stages: &mut AbortStages) -> bool {
         let mut should_abort = false;
         
         for command in commands {
@@ -215,7 +216,78 @@ impl Devices {
                     if let Err(msg) = self.serialize_and_send(socket, &mapping.board_id, &command) {
                         println!("{}", msg);
                     }
-                }
+                },
+                SequenceDomainCommand::CreateAbortStage { stage_name, abort_condition, valve_safe_states} => {
+                    // check to see if stage_name matches an already created stage name. if so, return error
+                    if let Some(name) = abort_stages.iter().find(|m| m.name == stage_name) {
+                        eprintln!("A stage already exists with the name {stage_name}. Skipping command.");
+                        continue;
+                    }
+                    // check to see if safe_valve_states is valid for every entry, if not return error
+                    let mut valve_lookup: HashMap<String, (&str, u32, bool)> = HashMap::new();
+                    for mapping in mappings {
+                        if mapping.sensor_type == SensorType::Valve {
+                            let normally_closed = mapping.normally_closed.unwrap_or(true);
+                            valve_lookup.insert(mapping.text_id.clone(), (&mapping.board_id, mapping.channel, normally_closed));
+                        }
+                    }
+
+                    // stores [sam_board_id, (channel_num, powered)]. every valve that an operator set an abort config for
+                    let mut board_valves: HashMap<String, Vec<ValveAction>> = HashMap::new();
+                    for (valve_name, desired_state) in valve_safe_states {
+                        // get the mapping for the current valve
+                        let Some(&(board_id, channel, normally_closed)) = valve_lookup.get(&valve_name)
+                        else {
+                            eprintln!("Abort valve '{}' not found in mappings. Skipping command.", valve_name);
+                            continue;
+                        };
+
+                        // determine if we want to give power to this valve
+                        let closed = desired_state == ValveState::Closed;
+                        let powered = closed != normally_closed;
+
+                        // append our determination of whether to power this valve to its SAM board vector
+                         board_valves.entry(board_id.clone().to_string())
+                            .or_insert_with(Vec::new)
+                            .push( ValveAction { channel_num: channel, powered: powered } );
+                    }
+
+                    // add to global abort_stages
+                    abort_stages.push( AbortStage { 
+                        name: stage_name, 
+                        abort_condition: abort_condition, 
+                        aborted: false, 
+                        valve_safe_states: board_valves 
+                    });
+                },
+                SequenceDomainCommand::SetAbortStage { stage_name } => {
+                    // change the abort stage in vehicle state by looking through saved abort stage configs. 
+                    // if name doesn't match up throw an error
+                    if let Some(stage) = abort_stages.iter().find(|m| m.name == stage_name) {
+                        self.state.abort_stage = stage.clone();
+                    } else {
+                        eprintln!("Tried to set abort stage to {stage_name} but could not find the stage.");
+                        continue;
+                    }
+                    
+                    // send sams the safe states that their valves should be in.
+                    // if a channel is not specified, it means we want that valve to just stay in
+                    // whatever state they are in already
+                    for (board_id, valves) in self.state.abort_stage.valve_safe_states.iter() {
+                        // create message for this sam board
+                        let command = SamControlMessage::AbortStageValveStates { valve_states: valves.clone() };
+
+                        // send message to this sam board
+                        if let Err(msg) = self.serialize_and_send(socket, &board_id, &command) {
+                            println!("{}", msg); 
+                        } else {
+                            println!("Sent {} abort stage's valve safe states to SAM: {}", self.state.abort_stage.name, board_id);
+                        }
+                    }
+                },
+                SequenceDomainCommand::AbortViaStage => {
+                    
+                },
                 SequenceDomainCommand::Abort => should_abort = true,
             }
         }

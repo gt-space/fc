@@ -6,8 +6,8 @@ mod sequence;
 // TODO: Make it so you enter servo's socket address.
 // TODO: Clean up domain socket on exit.
 use std::{collections::HashMap, env, net::{SocketAddr, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::Command, thread, time::{Duration, Instant}};
-use common::{comm::{FlightControlMessage, Sequence}, sequence::{MMAP_PATH, SOCKET_PATH}};
-use crate::{device::Devices, servo::ServoError, sequence::Sequences, state::Ingestible, device::Mappings};
+use common::{comm::{AbortStage, FlightControlMessage, Sequence}, sequence::{MMAP_PATH, SOCKET_PATH}};
+use crate::{device::Devices, servo::ServoError, sequence::Sequences, state::Ingestible, device::Mappings, device::AbortStages};
 use mmap_sync::synchronizer::Synchronizer;
 
 const SERVO_SOCKET_ADDRESSES: [(&str, u16); 4] = [
@@ -72,6 +72,7 @@ fn main() -> ! {
   let mut sequences: Sequences = HashMap::new();
   let mut synchronizer: Synchronizer = Synchronizer::new(MMAP_PATH.as_ref());
   let mut abort_sequence: Option<Sequence> = None;
+  let mut abort_stages: AbortStages = Vec::new();
   
   println!("Flight Computer running on version {}\n", env!("CARGO_PKG_VERSION"));
   println!("!!!! ATTENTION !!! ATTENTION !!!!");
@@ -96,6 +97,9 @@ fn main() -> ! {
       },
     }
   };
+
+  // dispatch child process for abort stages
+  start_abort_stage_process(&mut abort_stages, &mappings, &mut sequences);
   
   let mut last_sent_to_servo = Instant::now(); // for sending messages to servo
   let mut last_heartbeat_sent = Instant::now(); // for sending messages to boards
@@ -173,7 +177,7 @@ fn main() -> ! {
 
     // sequences and triggers
     let sam_commands = sequence::pull_commands(&command_socket);
-    let should_abort = devices.send_sam_commands(&socket, &mappings, sam_commands);
+    let should_abort = devices.send_sam_commands(&socket, &mappings, sam_commands, &mut abort_stages);
 
     if should_abort {
       abort(&mappings, &mut sequences, &abort_sequence);
@@ -246,6 +250,29 @@ fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr, 
       None
     }
   }
+}
+
+fn start_abort_stage_process(abort_stages: &mut AbortStages, mappings: &Mappings, sequences: &mut Sequences) {
+  let abort_stage_body = r#"
+while True:
+    if curr_abort_stage() != "FLIGHT" and !aborted_in_this_stage() and curr_abort_condition() == True:
+        abort
+    wait_for(Duration::from_secs(1))
+"#;
+
+  // create abort stage and store in abort_stages 
+  abort_stages.push(AbortStage { 
+    name: "DEFAULT".to_string(),
+    abort_condition: "False".to_string(), // never abort in this situation? 
+    aborted: false,
+    valve_safe_states: HashMap::new(),
+  });
+
+  let abort_stage_seq = Sequence{
+    name: "AbortStage".to_string(),
+    script: abort_stage_body.to_string(),
+  };
+  sequence::execute(mappings, &abort_stage_seq, sequences);
 }
 
 /// Checks if python3 and the passed python modules exist.
