@@ -95,7 +95,7 @@ checksum = "67ba02a97a2bd10f4b59b25c7973101c79642302776489e030cd13cdab09ed15"
 [[package]]
 name = "common"
 version = "0.1.0"
-source = "git+https://github.com/gt-space/luna.git?branch=abort-stages-p2#bf02c1a0cb540848a80e9117783e36a200e8a709"
+source = "git+https://github.com/gt-space/luna.git?branch=abort-stages-p2#5078ffddd1b33bcc5942399dd93ed9118444a432"
 dependencies = [
  "bytecheck",
  "jeflog",

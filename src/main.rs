@@ -192,7 +192,7 @@ fn main() -> ! {
 
     // sequences and triggers
     let sam_commands = sequence::pull_commands(&command_socket);
-    let should_abort = devices.send_sam_commands(&socket, &mappings, sam_commands, &mut abort_stages);
+    let should_abort = devices.send_sam_commands(&socket, &mappings, sam_commands, &mut abort_stages, &mut sequences);
 
     if should_abort {
       abort(&mappings, &mut sequences, &abort_sequence);
@@ -272,6 +272,7 @@ fn start_abort_stage_process(abort_stages: &mut AbortStages, mappings: &Mappings
 while True:
     if curr_abort_stage() != "FLIGHT" and !aborted_in_this_stage() and curr_abort_condition() == True:
         abort
+        wait() # need to wait to not spam messages 
     wait_for(Duration::from_secs(1))
 "#;
 

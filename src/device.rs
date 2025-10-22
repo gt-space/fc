@@ -2,7 +2,7 @@ use core::fmt;
 use std::{collections::HashMap, io, net::{IpAddr, SocketAddr, UdpSocket}, time::{Duration, Instant}};
 use common::comm::{ahrs, bms, flight::{DataMessage, SequenceDomainCommand}, sam::SamControlMessage, AbortStage, CompositeValveState, NodeMapping, SensorType, Statistics, ValveAction, ValveState, VehicleState};
 
-use crate::{Ingestible, DECAY, DEVICE_COMMAND_PORT, TIME_TO_LIVE};
+use crate::{sequence::Sequences, Ingestible, DECAY, DEVICE_COMMAND_PORT, TIME_TO_LIVE};
 
 pub(crate) type Mappings = Vec<NodeMapping>;
 pub(crate) type AbortStages = Vec<AbortStage>;
@@ -231,7 +231,7 @@ impl Devices {
     }
 
     ///
-    pub(crate) fn send_sam_commands(&mut self, socket: &UdpSocket, mappings: &Mappings, commands: Vec<SequenceDomainCommand>, abort_stages: &mut AbortStages) -> bool {
+    pub(crate) fn send_sam_commands(&mut self, socket: &UdpSocket, mappings: &Mappings, commands: Vec<SequenceDomainCommand>, abort_stages: &mut AbortStages, sequences: &mut Sequences) -> bool {
         let mut should_abort = false;
         
         for command in commands {
@@ -333,8 +333,33 @@ impl Devices {
                     }
                 },
                 SequenceDomainCommand::AbortViaStage => {
-                    
+                    // kill all sequences besides the abort stage sequence
+                    for (name, sequence) in &mut *sequences {
+                        if name != "AbortStage" {
+                            if let Err(e) = sequence.kill() {
+                                println!("Couldn't kill a sequence in preperation for abort, continuing normally: {e}");
+                            }
+                        }
+                    }
+
+                    // send message to sams 
+                    for device in self.devices.iter() {
+                        if device.get_board_id().starts_with("sam") {
+                            let command = SamControlMessage::Abort {  };
+                            // send message to this sam board
+                            if let Err(msg) = self.serialize_and_send(socket, device.get_board_id(), &command) {
+                                println!("{}", msg); 
+                            } else {
+                                println!("Sent abort message to SAM: {}, which will use {} stage's safe valves.", 
+                                    device.get_board_id(), self.state.abort_stage.name);
+                            }
+                        }
+                    }
+
+                    // update state to say that we have aborted in this stage
+                    self.state.abort_stage.aborted = true;
                 },
+                // TODO: shouldn't we break out of the loop here? if we receive an abort command why are we not flushing commands that come in after 
                 SequenceDomainCommand::Abort => should_abort = true,
             }
         }

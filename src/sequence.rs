@@ -6,6 +6,8 @@ pub(crate) type Sequences = HashMap<String, Child>;
 
 fn run(mappings: &Mappings, sequence: &Sequence) -> io::Result<Child> {
     let mut script = String::from("from common import *;");
+    script.push_str("OPEN = ValveState.Open;");
+    script.push_str("CLOSED = ValveState.Closed;");
     for mapping in mappings {
         let definition = match mapping.sensor_type {
             SensorType::Valve => format!("{0} = Valve('{0}');", mapping.text_id),
