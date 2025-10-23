@@ -417,6 +417,10 @@ impl Devices {
     pub(crate) fn get_state(&self) -> &VehicleState {
         return &self.state;
     }
+
+    pub(crate) fn set_state_abort_stage(&mut self, stage: AbortStage) {
+        self.state.abort_stage = stage;
+    }
     
     pub(crate) fn iter_mut(&mut self) -> ::core::slice::IterMut<'_, Device> {
         self.devices.iter_mut()

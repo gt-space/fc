@@ -5,7 +5,7 @@ mod sequence;
 
 // TODO: Make it so you enter servo's socket address.
 // TODO: Clean up domain socket on exit.
-use std::{collections::HashMap, env, net::{SocketAddr, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::Command, thread, time::{Duration, Instant}};
+use std::{collections::HashMap, default, env, net::{SocketAddr, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::Command, thread, time::{Duration, Instant}};
 use common::{comm::{AbortStage, FlightControlMessage, Sequence}, sequence::{MMAP_PATH, SOCKET_PATH}};
 use crate::{device::Devices, servo::ServoError, sequence::Sequences, state::Ingestible, device::Mappings, device::AbortStages};
 use mmap_sync::synchronizer::Synchronizer;
@@ -99,13 +99,11 @@ fn main() -> ! {
   };
 
   // dispatch child process for abort stages
-  start_abort_stage_process(&mut abort_stages, &mappings, &mut sequences);
+  //start_abort_stage_process(&mut abort_stages, &mappings, &mut sequences);
   
   let mut last_sent_to_servo = Instant::now(); // for sending messages to servo
   let mut last_heartbeat_sent = Instant::now(); // for sending messages to boards
   let mut aborted = false;
-  let mut mapping_has_prvnt = false;
-  let mut sent_prvnt_sam_msg = false;
   loop {
     let servo_message = get_servo_data(&mut servo_stream, &mut servo_address, &mut last_received_from_servo, &mut aborted);
 
@@ -126,14 +124,13 @@ fn main() -> ! {
         FlightControlMessage::Trigger(_) => todo!(),
         FlightControlMessage::Mappings(m) => {
           mappings = m;
-          mapping_has_prvnt = mappings.iter().any(|m| m.text_id == "PRVNT");
-          sent_prvnt_sam_msg = false;
           // send clear message to sams. this is needed in case we move PRVNT to a different sam on the new mappings
           // as the old mapped sam will still think it has prvnt. we also need to sent the prvnt msg to the newly mapped
           // prvnt sam (if it exists)
-          // still need to figure out when to send messages when devices connect
           devices.send_sam_clear_prvnt_channel(&socket, &mappings);
           // need to send prvnt mapping to sam board again if mappings change while everything is up
+          send_prvnt_channel(&socket, &mappings, &devices);
+          start_abort_stage_process(&mut abort_stages, &mappings, &mut sequences, &mut devices);
         },
         FlightControlMessage::Sequence(s) if s.name == "abort" => abort_sequence = Some(s),
         FlightControlMessage::Sequence(ref s) => sequence::execute(&mappings, s, &mut sequences),
@@ -204,15 +201,26 @@ fn main() -> ! {
 
 fn abort(mappings: &Mappings, sequences: &mut Sequences, abort_sequence: &Option<Sequence>) {
   if let Some(ref sequence) = abort_sequence {
-    for (_, sequence) in &mut *sequences {
-      if let Err(e) = sequence.kill() {
-        println!("Couldn't kill a sequence in preperation for abort, continuing normally: {e}");
+    for (name, sequence) in &mut *sequences {
+      if name != "AbortStage" {
+        if let Err(e) = sequence.kill() {
+          println!("Couldn't kill a sequence in preperation for abort, continuing normally: {e}");
+        }
       }
     }
 
     sequence::execute(&mappings, sequence, sequences);
   } else {
     println!("Received an abort command, but no abort sequence has been set. Continuing normally...");
+  }
+}
+
+fn send_prvnt_channel(socket: &UdpSocket, mappings: &Mappings, devices: &Devices) {
+  // find prvnt if it exists
+  if let Some(prvnt_mapping) = mappings.iter().find(|m| m.text_id == "PRVNT") {
+    if let Some(device) = devices.iter().find(|d| *d.get_board_id() == prvnt_mapping.board_id) {
+      device.send_sam_prvnt_safe(socket, mappings, device.get_board_id(), devices);
+    } 
   }
 }
 
@@ -267,22 +275,35 @@ fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr, 
   }
 }
 
-fn start_abort_stage_process(abort_stages: &mut AbortStages, mappings: &Mappings, sequences: &mut Sequences) {
-  let abort_stage_body = r#"
-while True:
-    if curr_abort_stage() != "FLIGHT" and !aborted_in_this_stage() and curr_abort_condition() == True:
-        abort
-        wait() # need to wait to not spam messages 
-    wait_for(Duration::from_secs(1))
-"#;
+fn start_abort_stage_process(abort_stages: &mut AbortStages, mappings: &Mappings, sequences: &mut Sequences, devices: &mut Devices) {
+  // if any abort stage sequences exist, kill them
+  for (name, sequence) in &mut *sequences {
+    if name == "AbortStage" {
+        if let Err(e) = sequence.kill() {
+            println!("Couldn't kill AbortStage sequence in preperation for starting new AbortStage sequence: {e}");
+            return;
+        }
+    }
+  }
 
+  let abort_stage_body = r#"
+import time
+while True:
+    if curr_abort_stage() != "FLIGHT" and aborted_in_this_stage() == False and eval(curr_abort_condition()) == True:
+        abort()
+    wait_for(10*ms)
+"#;
+  
   // create abort stage and store in abort_stages 
-  abort_stages.push(AbortStage { 
+  let default_stage = AbortStage { 
     name: "DEFAULT".to_string(),
     abort_condition: "False".to_string(), // never abort in this situation? 
     aborted: false,
     valve_safe_states: HashMap::new(),
-  });
+  };
+  abort_stages.push(default_stage.clone());
+
+  devices.set_state_abort_stage(default_stage);
 
   let abort_stage_seq = Sequence{
     name: "AbortStage".to_string(),
