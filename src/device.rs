@@ -12,12 +12,12 @@ pub(crate) struct Device {
     id: String,
     address: SocketAddr,
     last_recieved: Instant,
-    first_heartbeat: bool, //NEW CHANGE
+    num_heartbeats: u32, 
 }
 
 impl Device {
     fn new(id: String, address: SocketAddr) -> Self {
-        Device { id, address, last_recieved: Instant::now(), first_heartbeat: true }
+        Device { id, address, last_recieved: Instant::now(), num_heartbeats: 0 }
     }
 
     /// Should be ran whenever data is received from a board to update.
@@ -35,7 +35,7 @@ impl Device {
             .map_err(|e| Error::SerializationFailed(e))?;
         socket.send_to(serialized, self.address).map_err(|e| Error::TransportFailed(e))?;
         
-        if self.first_heartbeat {
+        if self.num_heartbeats == 20 {
             if self.get_board_id().starts_with("sam") {
                 self.send_sam_prvnt_safe(&socket, &mappings, self.get_board_id(), devices);
             }
@@ -97,8 +97,12 @@ impl Device {
         self.address.ip()
     }
 
-    pub(crate) fn set_first_heartbeat_var(&mut self, value: bool) {
-        self.first_heartbeat = value;
+    pub(crate) fn get_num_heartbeats(&self) -> u32 {
+        self.num_heartbeats
+    }
+
+    pub(crate) fn increment_num_heartbeats(&mut self) {
+        self.num_heartbeats += 1;
     }
 }
 

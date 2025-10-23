@@ -185,13 +185,16 @@ fn main() -> ! {
             device.get_board_id(),
             device.get_ip()
           );
+          continue;
         }
         last_heartbeat_sent = Instant::now();
       }
     }
 
     for device in devices.iter_mut() {
-      device.set_first_heartbeat_var(false);
+      if device.get_num_heartbeats() < 20 {
+        device.increment_num_heartbeats();
+      }
     }
 
     // sequences and triggers
