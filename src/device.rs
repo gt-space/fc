@@ -266,10 +266,10 @@ impl Devices {
                 },
                 SequenceDomainCommand::CreateAbortStage { stage_name, abort_condition, valve_safe_states} => {
                     // check to see if stage_name matches an already created stage name. if so, return error
-                    if let Some(name) = abort_stages.iter().find(|m| m.name == stage_name) {
-                        eprintln!("A stage already exists with the name {stage_name}. Skipping command.");
+                    /*if let Some(name) = abort_stages.iter().find(|m| m.name == stage_name) {
+                        eprintln!("A stage already exists with the name {stage_name}, so skipping creation of stage.");
                         continue;
-                    }
+                    }*/ // DO WE NEED THIS? IF THIS IS THERE CANT CHANGE STAGE INFO IF WE MADE MISTAKE. BUT WHAT IF IN THIS STAGE CURRENTLY?
                     // check to see if safe_valve_states is valid for every entry, if not return error
                     let mut valve_lookup: HashMap<String, (&str, u32, bool)> = HashMap::new();
                     for mapping in mappings {
@@ -333,31 +333,7 @@ impl Devices {
                     }
                 },
                 SequenceDomainCommand::AbortViaStage => {
-                    // kill all sequences besides the abort stage sequence
-                    for (name, sequence) in &mut *sequences {
-                        if name != "AbortStage" {
-                            if let Err(e) = sequence.kill() {
-                                println!("Couldn't kill a sequence in preperation for abort, continuing normally: {e}");
-                            }
-                        }
-                    }
-
-                    // send message to sams 
-                    for device in self.devices.iter() {
-                        if device.get_board_id().starts_with("sam") {
-                            let command = SamControlMessage::Abort {  };
-                            // send message to this sam board
-                            if let Err(msg) = self.serialize_and_send(socket, device.get_board_id(), &command) {
-                                println!("{}", msg); 
-                            } else {
-                                println!("Sent abort message to SAM: {}, which will use {} stage's safe valves.", 
-                                    device.get_board_id(), self.state.abort_stage.name);
-                            }
-                        }
-                    }
-
-                    // update state to say that we have aborted in this stage
-                    self.state.abort_stage.aborted = true;
+                    
                 },
                 // TODO: shouldn't we break out of the loop here? if we receive an abort command why are we not flushing commands that come in after 
                 SequenceDomainCommand::Abort => should_abort = true,
@@ -365,6 +341,34 @@ impl Devices {
         }
 
         should_abort
+    }
+
+    pub(crate) fn send_sams_abort(&mut self, socket: &UdpSocket, mappings: &Mappings, abort_stages: &mut AbortStages, sequences: &mut Sequences) {
+        // kill all sequences besides the abort stage sequence
+        for (name, sequence) in &mut *sequences {
+            if name != "AbortStage" {
+                if let Err(e) = sequence.kill() {
+                    println!("Couldn't kill a sequence in preperation for abort, continuing normally: {e}");
+                }
+            }
+        }
+
+        // send message to sams 
+        for device in self.devices.iter() {
+            if device.get_board_id().starts_with("sam") {
+                let command = SamControlMessage::Abort {  };
+                // send message to this sam board
+                if let Err(msg) = self.serialize_and_send(socket, device.get_board_id(), &command) {
+                    println!("{}", msg); 
+                } else {
+                    println!("Sent abort message to SAM: {}, which will use {} stage's safe valves.", 
+                        device.get_board_id(), self.state.abort_stage.name);
+                }
+            }
+        }
+
+        // update state to say that we have aborted in this stage
+        self.state.abort_stage.aborted = true;
     }
 
     pub(crate) fn send_sam_clear_prvnt_channel(&self, socket: &UdpSocket, mappings: &Mappings) {

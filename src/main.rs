@@ -118,7 +118,14 @@ fn main() -> ! {
       println!("Recieved a FlightControlMessage: {command:#?}");
 
       match command {
-        FlightControlMessage::Abort => abort(&mappings, &mut sequences, &abort_sequence),
+        FlightControlMessage::Abort => {
+          // check which type of abort should happen, abort stage or abort seq
+          if devices.get_state().abort_stage.name != "DEFAULT" {
+            devices.send_sams_abort(&socket, &mappings, &mut abort_stages, &mut sequences);
+          } else {
+            abort(&mappings, &mut sequences, &abort_sequence);
+          }
+        },
         FlightControlMessage::AhrsCommand(c) => devices.send_ahrs_command(&socket, c),
         FlightControlMessage::BmsCommand(c) => devices.send_bms_command(&socket, c),
         FlightControlMessage::Trigger(_) => todo!(),
@@ -192,7 +199,12 @@ fn main() -> ! {
     let should_abort = devices.send_sam_commands(&socket, &mappings, sam_commands, &mut abort_stages, &mut sequences);
 
     if should_abort {
-      abort(&mappings, &mut sequences, &abort_sequence);
+      // check which type of abort should happen, abort stage or abort seq
+      if devices.get_state().abort_stage.name != "DEFAULT" {
+        devices.send_sams_abort(&socket, &mappings, &mut abort_stages, &mut sequences);
+      } else {
+        abort(&mappings, &mut sequences, &abort_sequence);
+      }
     }
 
     // triggers
@@ -285,6 +297,7 @@ fn start_abort_stage_process(abort_stages: &mut AbortStages, mappings: &Mappings
         }
     }
   }
+  sequences.remove_entry("AbortStage");
 
   let abort_stage_body = r#"
 import time
