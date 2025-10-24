@@ -191,9 +191,11 @@ fn main() -> ! {
       }
     }
 
-    for device in devices.iter_mut() {
-      if device.get_num_heartbeats() < 20 {
-        device.increment_num_heartbeats();
+    if need_to_send_heartbeat {
+      for device in devices.iter_mut() {
+        if device.get_num_heartbeats() <= 20 {
+          device.increment_num_heartbeats();
+        } 
       }
     }
 

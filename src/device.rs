@@ -34,7 +34,7 @@ impl Device {
         let serialized = postcard::to_slice(&DataMessage::FlightHeartbeat, &mut buf)
             .map_err(|e| Error::SerializationFailed(e))?;
         socket.send_to(serialized, self.address).map_err(|e| Error::TransportFailed(e))?;
-        
+        println!("{}", self.id);
         if self.num_heartbeats == 20 {
             if self.get_board_id().starts_with("sam") {
                 self.send_sam_prvnt_safe(&socket, &mappings, self.get_board_id(), devices);
@@ -302,6 +302,11 @@ impl Devices {
                             .or_insert_with(Vec::new)
                             .push( ValveAction { channel_num: channel, powered: powered } );
                     }
+                    
+                    // remove this stage if it existed previously
+                    if let Some(stage) = abort_stages.iter().position(|s| s.name == stage_name) {
+                        abort_stages.swap_remove(stage);
+                    }
 
                     // add to global abort_stages
                     abort_stages.push( AbortStage { 
@@ -337,7 +342,7 @@ impl Devices {
                     }
                 },
                 SequenceDomainCommand::AbortViaStage => {
-                    
+                    self.send_sams_abort(socket, mappings, abort_stages, sequences);
                 },
                 // TODO: shouldn't we break out of the loop here? if we receive an abort command why are we not flushing commands that come in after 
                 SequenceDomainCommand::Abort => should_abort = true,
