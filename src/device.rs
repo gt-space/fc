@@ -34,32 +34,12 @@ impl Device {
         let serialized = postcard::to_slice(&DataMessage::FlightHeartbeat, &mut buf)
             .map_err(|e| Error::SerializationFailed(e))?;
         socket.send_to(serialized, self.address).map_err(|e| Error::TransportFailed(e))?;
-        println!("{}", self.id);
 
         Ok(())
     }
 
     pub(crate) fn is_disconnected(&self) -> bool {
         Instant::now().duration_since(self.last_recieved) > TIME_TO_LIVE
-    }
-
-    /// Sends a message on a socket to a board with id `destination`
-    fn serialize_and_send<T: serde::ser::Serialize>(&self, socket: &UdpSocket, destination: &str, message: &T, devices: &Devices) -> std::result::Result<(), String> {
-        let mut buf: [u8; 1024] = [0; 1024];
-
-        let Some(device) = devices.iter().find(|d| d.id == *destination) else {
-            return Err("Tried to sent a message to a board that hasn't been connected yet.".to_string());
-        };
-
-        if let Err(e) = postcard::to_slice::<T>(message, &mut buf) {
-            return Err(format!("Couldn't serialize message: {e}"));
-        };
-
-        if let Err(e) = device.send(socket, &buf) {
-            return Err(format!("Couldn't send message to {destination}: {e}"));
-        };
-
-        return Ok(())
     }
 
     /// Sends data to the device via a given socket.
@@ -330,17 +310,22 @@ impl Devices {
         // if a channel is not specified, it means we want that valve to just stay in
         // whatever state they are in already
 
+        // individual board
         if board_id.is_some() {
             if let Some(device) = self.devices.iter().find(|d| d.get_board_id().deref() == board_id.unwrap() && board_id.unwrap().starts_with("sam")) {
-                let command = SamControlMessage::AbortStageValveStates { 
-                    valve_states: self.state.abort_stage.valve_safe_states.get(device.get_board_id()).unwrap().clone(),
-                };
+                if let Some(valve_states_to_send) = self.state.abort_stage.valve_safe_states.get(device.get_board_id()) {
+                    let command = SamControlMessage::AbortStageValveStates { 
+                        valve_states: valve_states_to_send.clone(),
+                    };
 
-                // send message to this sam board
-                if let Err(msg) = self.serialize_and_send(socket, board_id.unwrap(), &command) {
-                    println!("{}", msg); 
+                    // send message to this sam board
+                    if let Err(msg) = self.serialize_and_send(socket, board_id.unwrap(), &command) {
+                        println!("{}", msg); 
+                    } else {
+                        println!("Sent {} abort stage's valve safe states to SAM: {}", self.state.abort_stage.name, board_id.unwrap());
+                    }
                 } else {
-                    println!("Sent {} abort stage's valve safe states to SAM: {}", self.state.abort_stage.name, board_id.unwrap());
+                    println!("No abort stage configuration to send to {}", device.get_board_id());
                 }
             } else {
                 eprintln!("Invalid board id passed in when trying to send sams abort stage: Either your board does not exist or is not a sam.");
