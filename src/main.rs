@@ -46,7 +46,7 @@ const FC_TO_SERVO_RATE: Duration = Duration::from_millis(10);
 const SEND_HEARTBEAT_RATE: Duration = Duration::from_millis(50);
 
 /// If we do not hear from servo for this amount of time, we abort
-const SERVO_TO_FC_TIME_TO_LIVE: Duration = Duration::from_secs(60 * 10); // times 10 for 10 minutes
+const SERVO_TO_FC_TIME_TO_LIVE: Duration = Duration::from_secs(10); // times 10 for 10 minutes
 
 
 fn main() -> ! {
@@ -111,6 +111,7 @@ fn main() -> ! {
 
     // if we haven't heard from servo in over 10 minutes, abort.
     if (!aborted) && (Instant::now().duration_since(last_received_from_servo) > SERVO_TO_FC_TIME_TO_LIVE) {
+      println!("FC to Servo timer of {} has expired. Sending abort messages to boards.", SERVO_TO_FC_TIME_TO_LIVE.as_secs_f64());
       aborted = true;
       devices.send_sams_abort(&socket, &mappings, &mut abort_stages, &mut sequences, false); // on servo LOC, we immediately abort after 10 mins
     }
@@ -206,8 +207,15 @@ fn main() -> ! {
 
     // TODO: this is not really optimal, figure out a better way to do this
     for device in devices.iter() {
+      //println!("{}", device.get_num_heartbeats());
       if device.get_num_heartbeats() == 20 {
         devices.send_sams_abort_stage(&socket, &Some(device.get_board_id()));
+      }
+    }
+
+    for device in devices.iter_mut() {
+      if device.get_num_heartbeats() == 20 {
+      device.increment_num_heartbeats();
       }
     }
 
@@ -310,6 +318,7 @@ fn start_abort_stage_process(abort_stages: &mut AbortStages, mappings: &Mappings
 import time
 while True:
     if curr_abort_stage() != "FLIGHT" and aborted_in_this_stage() == False and eval(curr_abort_condition()) == True:
+        #print("ABORTING")
         abort()
     wait_for(10*ms)
 "#;

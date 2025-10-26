@@ -246,6 +246,7 @@ dependencies = [
  "mmap-sync",
  "postcard",
  "serde",
+ "wyhash",
 ]
 
 [[package]]
