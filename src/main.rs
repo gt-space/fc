@@ -9,6 +9,8 @@ use std::{collections::HashMap, default, env, net::{SocketAddr, TcpStream, UdpSo
 use common::{comm::{AbortStage, FlightControlMessage, Sequence}, sequence::{MMAP_PATH, SOCKET_PATH}};
 use crate::{device::Devices, servo::ServoError, sequence::Sequences, state::Ingestible, device::Mappings, device::AbortStages};
 use mmap_sync::synchronizer::Synchronizer;
+use wyhash::WyHash;
+use mmap_sync::locks::LockDisabled;
 
 const SERVO_SOCKET_ADDRESSES: [(&str, u16); 4] = [
   ("192.168.1.10", 5025),
@@ -72,7 +74,7 @@ fn main() -> ! {
   let mut mappings: Mappings = Vec::new();
   let mut devices: Devices = Devices::new();
   let mut sequences: Sequences = HashMap::new();
-  let mut synchronizer: Synchronizer = Synchronizer::new(MMAP_PATH.as_ref());
+  let mut synchronizer: Synchronizer<WyHash, LockDisabled, 1024, 500_000> = Synchronizer::with_params(MMAP_PATH.as_ref());
   let mut abort_sequence: Option<Sequence> = None;
   let mut abort_stages: AbortStages = Vec::new();
   

@@ -1,8 +1,11 @@
 use common::comm::{ahrs, bms, flight::DataMessage, sam::{self, ChannelType, Unit}, CompositeValveState, Measurement, SensorType, ValveState, VehicleState};
 use crate::{Mappings, MMAP_GRACE_PERIOD};
 use mmap_sync::synchronizer::{Synchronizer, SynchronizerError};
+use std::time::Duration;
+use wyhash::WyHash;
+use mmap_sync::locks::LockDisabled;
 
-pub(crate) fn sync_sequences(sync: &mut Synchronizer, state: &VehicleState) -> Result<(usize, bool), SynchronizerError> {
+pub(crate) fn sync_sequences(sync: &mut Synchronizer::<WyHash, LockDisabled, 1024, 500_000>, state: &VehicleState) -> Result<(usize, bool), SynchronizerError> {
   sync.write(state, MMAP_GRACE_PERIOD)
 }
 
