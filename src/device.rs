@@ -1,22 +1,23 @@
 use core::fmt;
-use std::{collections::HashMap, io, net::{IpAddr, SocketAddr, UdpSocket}, time::{Duration, Instant}};
-use common::comm::{ahrs, bms, flight::{DataMessage, SequenceDomainCommand}, sam::SamControlMessage, CompositeValveState, NodeMapping, Statistics, ValveState, VehicleState};
+use std::{collections::HashMap, io, net::{IpAddr, SocketAddr, UdpSocket}, ops::Deref, time::{Duration, Instant}};
+use common::comm::{ahrs, bms, flight::{DataMessage, ValveSafeState, SequenceDomainCommand}, sam::SamControlMessage, AbortStage, CompositeValveState, NodeMapping, SensorType, Statistics, ValveAction, ValveState, VehicleState};
 
-use crate::{Ingestible, DECAY, DEVICE_COMMAND_PORT, TIME_TO_LIVE};
+use crate::{sequence::Sequences, Ingestible, DECAY, DEVICE_COMMAND_PORT, TIME_TO_LIVE};
 
 pub(crate) type Mappings = Vec<NodeMapping>;
+pub(crate) type AbortStages = Vec<AbortStage>;
 
 #[derive(Clone)]
 pub(crate) struct Device {
     id: String,
     address: SocketAddr,
-    last_recieved: Instant,
-    first_heartbeat: bool, //NEW CHANGE
+    last_recieved: Instant, 
+    num_heartbeats: u32, 
 }
 
 impl Device {
     fn new(id: String, address: SocketAddr) -> Self {
-        Device { id, address, last_recieved: Instant::now(), first_heartbeat: true }
+        Device { id, address, last_recieved: Instant::now(), num_heartbeats: 0 }
     }
 
     /// Should be ran whenever data is received from a board to update.
@@ -33,12 +34,6 @@ impl Device {
         let serialized = postcard::to_slice(&DataMessage::FlightHeartbeat, &mut buf)
             .map_err(|e| Error::SerializationFailed(e))?;
         socket.send_to(serialized, self.address).map_err(|e| Error::TransportFailed(e))?;
-        
-        if self.first_heartbeat {
-            if self.get_board_id().starts_with("sam") {
-                self.send_sam_prvnt_safe(&socket, &mappings, self.get_board_id(), devices);
-            }
-        }
 
         Ok(())
     }
@@ -72,22 +67,6 @@ impl Device {
         Ok(())
     }
 
-    pub(crate) fn send_sam_prvnt_safe(&self, socket: &UdpSocket, mappings: &Mappings, board_id: &std::string::String, devices: &Devices) {
-        // find prvnt if it exists
-        let Some(prvnt_mapping) = mappings.iter().find(|m| m.text_id == "PRVNT") else {
-              eprintln!("PRVNT not found");
-              return
-        };
-        if *board_id == prvnt_mapping.board_id {
-            let command = SamControlMessage::PRVNTSafing { channel: prvnt_mapping.channel};
-            if let Err(msg) = self.serialize_and_send(socket, &prvnt_mapping.board_id, &command, devices) {
-                    println!("{}", msg);
-                    return;
-            }
-            println!("PRVNT channel found on {} and message has been sent.", prvnt_mapping.board_id);
-        }
-    }
-
     pub(crate) fn get_board_id(&self) -> &String {
         &self.id
     }
@@ -96,8 +75,12 @@ impl Device {
         self.address.ip()
     }
 
-    pub(crate) fn set_first_heartbeat_var(&mut self, value: bool) {
-        self.first_heartbeat = value;
+    pub(crate) fn get_num_heartbeats(&self) -> u32 {
+        self.num_heartbeats
+    }
+
+    pub(crate) fn increment_num_heartbeats(&mut self) {
+        self.num_heartbeats += 1;
     }
 }
 
@@ -230,7 +213,7 @@ impl Devices {
     }
 
     ///
-    pub(crate) fn send_sam_commands(&mut self, socket: &UdpSocket, mappings: &Mappings, commands: Vec<SequenceDomainCommand>) -> bool {
+    pub(crate) fn send_sam_commands(&mut self, socket: &UdpSocket, mappings: &Mappings, commands: Vec<SequenceDomainCommand>, abort_stages: &mut AbortStages, sequences: &mut Sequences) -> bool {
         let mut should_abort = false;
         
         for command in commands {
@@ -262,7 +245,77 @@ impl Devices {
                     if let Err(msg) = self.serialize_and_send(socket, &mapping.board_id, &command) {
                         println!("{}", msg);
                     }
-                }
+                },
+                SequenceDomainCommand::CreateAbortStage { stage_name, abort_condition, valve_safe_states} => {
+                    // check to see if stage_name matches an already created stage name. if so, return error
+                    /*if let Some(name) = abort_stages.iter().find(|m| m.name == stage_name) {
+                        eprintln!("A stage already exists with the name {stage_name}, so skipping creation of stage.");
+                        continue;
+                    }*/ // DO WE NEED THIS? IF THIS IS THERE CANT CHANGE STAGE INFO IF WE MADE MISTAKE. BUT WHAT IF IN THIS STAGE CURRENTLY?
+                    // check to see if safe_valve_states is valid for every entry, if not return error
+                    let mut valve_lookup: HashMap<String, (&str, u32, bool)> = HashMap::new();
+                    for mapping in mappings {
+                        if mapping.sensor_type == SensorType::Valve {
+                            let normally_closed = mapping.normally_closed.unwrap_or(true);
+                            valve_lookup.insert(mapping.text_id.clone(), (&mapping.board_id, mapping.channel, normally_closed));
+                        }
+                    }
+
+                    // stores [sam_board_id, (channel_num, powered, timer)]. every valve that an operator set an abort config for
+                    let mut board_valves: HashMap<String, Vec<ValveAction>> = HashMap::new();
+                    for (valve_name, valve_state_info) in valve_safe_states {
+                        // get the mapping for the current valve
+                        let Some(&(board_id, channel, normally_closed)) = valve_lookup.get(&valve_name)
+                        else {
+                            eprintln!("Abort valve '{}' not found in mappings. Skipping command.", valve_name);
+                            continue;
+                        };
+
+                        // determine if we want to give power to this valve
+                        let closed = valve_state_info.desired_state == ValveState::Closed;
+                        let powered = closed != normally_closed;
+
+                        // append our determination of whether to power this valve to its SAM board vector
+                         board_valves.entry(board_id.clone().to_string())
+                            .or_insert_with(Vec::new)
+                            .push( ValveAction { 
+                                channel_num: channel, 
+                                powered: powered, 
+                                timer: Duration::from_secs(valve_state_info.safing_timer as u64) 
+                            });
+                    }
+                    
+                    // remove this stage if it existed previously
+                    if let Some(stage) = abort_stages.iter().position(|s| s.name == stage_name) {
+                        abort_stages.swap_remove(stage);
+                    }
+
+                    // add to global abort_stages
+                    abort_stages.push( AbortStage { 
+                        name: stage_name, 
+                        abort_condition: abort_condition, 
+                        aborted: false, 
+                        valve_safe_states: board_valves 
+                    });
+                },
+                // TODO: should we not allow setting an abort stage if we already in that abort stage?
+                SequenceDomainCommand::SetAbortStage { stage_name } => {
+                    // change the abort stage in vehicle state by looking through saved abort stage configs. 
+                    // if name doesn't match up throw an error
+                    if let Some(stage) = abort_stages.iter().find(|m| m.name == stage_name) {
+                        self.set_abort_stage(&stage);
+                    } else {
+                        eprintln!("Tried to set abort stage to {stage_name} but could not find the stage.");
+                        continue;
+                    }
+                    
+                    self.send_sams_abort_stage(socket, &None);
+                },
+                SequenceDomainCommand::AbortViaStage => {
+                    //println!("Sending abort message to sams");
+                    self.send_sams_abort(socket, mappings, abort_stages, sequences, true); // command from a sequence, so yes we want to use stage timers
+                },
+                // TODO: shouldn't we break out of the loop here? if we receive an abort command why are we not flushing commands that come in after 
                 SequenceDomainCommand::Abort => should_abort = true,
             }
         }
@@ -270,26 +323,84 @@ impl Devices {
         should_abort
     }
 
-    pub(crate) fn send_sam_clear_prvnt_channel(&self, socket: &UdpSocket, mappings: &Mappings) {
-        for device in self.devices.iter() {
-            if device.get_board_id().starts_with("sam") {
-                let command = SamControlMessage::ClearPRVNTMsg { };
-                if let Err(msg) = self.serialize_and_send(socket, device.get_board_id(), &command) {
-                        println!("{}", msg);
+    // sends all sams the current abort stage's safe valve states. if "None" board_id is passed, message is sent
+    // to all sams. else, a message is sent to the board id passed in (if it is valid)
+    pub(crate) fn send_sams_abort_stage(&self, socket: &UdpSocket, board_id: &Option<&String>) {
+        // send sams the safe states that their valves should be in.
+        // if a channel is not specified, it means we want that valve to just stay in
+        // whatever state they are in already
+
+        // individual board
+        if board_id.is_some() {
+            if let Some(device) = self.devices.iter().find(|d| d.get_board_id().deref() == board_id.unwrap() && board_id.unwrap().starts_with("sam")) {
+                if let Some(valve_states_to_send) = self.state.abort_stage.valve_safe_states.get(device.get_board_id()) {
+                    let command = SamControlMessage::AbortStageValveStates { 
+                        valve_states: valve_states_to_send.clone(),
+                    };
+
+                    // send message to this sam board
+                    if let Err(msg) = self.serialize_and_send(socket, board_id.unwrap(), &command) {
+                        println!("{}", msg); 
+                    } else {
+                        println!("Sent {} abort stage's valve safe states to SAM: {}", self.state.abort_stage.name, board_id.unwrap());
+                    }
                 } else {
-                    println!("Cleared PRVNT channel mappings in SAM memory");
+                    println!("No abort stage configuration to send to {}", device.get_board_id());
+                }
+            } else {
+                eprintln!("Invalid board id passed in when trying to send sams abort stage: Either your board does not exist or is not a sam.");
+            }
+        } else {
+            for (board_id, valves) in self.state.abort_stage.valve_safe_states.iter() {
+                // create message for this sam board
+                let command = SamControlMessage::AbortStageValveStates { valve_states: valves.clone() };
+
+                // send message to this sam board
+                if let Err(msg) = self.serialize_and_send(socket, &board_id, &command) {
+                    println!("{}", msg); 
+                } else {
+                    println!("Sent {} abort stage's valve safe states to SAM: {}", self.state.abort_stage.name, board_id);
                 }
             }
         }
     }
+    pub(crate) fn send_sams_abort(&mut self, socket: &UdpSocket, mappings: &Mappings, abort_stages: &mut AbortStages, sequences: &mut Sequences, use_stage_timers: bool) {
+        // kill all sequences besides the abort stage sequence
+        for (name, sequence) in &mut *sequences {
+            if name != "AbortStage" {
+                if let Err(e) = sequence.kill() {
+                    println!("Couldn't kill a sequence in preperation for abort, continuing normally: {e}");
+                }
+            }
+        }
 
-    // send SafeValves messages to sams
-    pub(crate) fn send_sam_safe_valves(&self, socket: &UdpSocket) {
+        // send message to sams 
         for device in self.devices.iter() {
             if device.get_board_id().starts_with("sam") {
-                let command = SamControlMessage::SafeValves { };
+                let command = SamControlMessage::Abort { use_stage_timers: use_stage_timers };
+                // send message to this sam board
+                if let Err(msg) = self.serialize_and_send(socket, device.get_board_id(), &command) {
+                    println!("{}", msg); 
+                } else {
+                    println!("Sent abort message to SAM: {}, which will use {} stage's safe valves.", 
+                        device.get_board_id(), self.state.abort_stage.name);
+                }
+            }
+        }
+
+        // update state to say that we have aborted in this stage
+        self.state.abort_stage.aborted = true;
+    }
+
+    // Clears any stored abort stages on sams
+    pub(crate) fn send_sam_clear_abort_stage(&self, socket: &UdpSocket) {
+        for device in self.devices.iter() {
+            if device.get_board_id().starts_with("sam") {
+                let command = SamControlMessage::ClearStoredAbortStage {  };
                 if let Err(msg) = self.serialize_and_send(socket, device.get_board_id(), &command) {
                         println!("{}", msg);
+                } else {
+                    println!("Cleared abort stage from {} memory", device.get_board_id());
                 }
             }
         }
@@ -319,6 +430,10 @@ impl Devices {
 
     pub(crate) fn get_state(&self) -> &VehicleState {
         return &self.state;
+    }
+
+    pub(crate) fn set_abort_stage(&mut self, stage: &AbortStage) {
+        self.state.abort_stage = stage.clone();
     }
     
     pub(crate) fn iter_mut(&mut self) -> ::core::slice::IterMut<'_, Device> {

@@ -1,8 +1,11 @@
-use std::{fmt, io::{self, Read, Write}, net::{SocketAddr, TcpStream, ToSocketAddrs, UdpSocket}, time::Duration};
+use std::{fmt, io::{self, Read, Write}, net::{SocketAddr, TcpStream, ToSocketAddrs, UdpSocket}, time::Duration, thread};
 use common::comm::{Computer, FlightControlMessage, VehicleState};
 use postcard::experimental::max_size::MaxSize;
+use socket2::{Socket, Domain, Type, Protocol, TcpKeepalive};
 
 use crate::SERVO_DATA_PORT;
+
+pub const servo_keep_alive_delay: Duration = Duration::from_secs(1);
 
 type Result<T> = std::result::Result<T, ServoError>;
 
@@ -44,13 +47,22 @@ pub(crate) fn establish(servo_addresses: &[impl ToSocketAddrs], prev_connected_s
   
         match TcpStream::connect_timeout(addr, timeout) {
           Ok(mut s) => {
-            s.set_nodelay(true).map_err(|e| ServoError::TransportFailed(e))?;
-            s.set_nonblocking(true).map_err(|e| ServoError::TransportFailed(e))?;
+            let socket = Socket::from(s);
+            socket.set_keepalive(true).map_err(|e| return ServoError::TransportFailed(e))?;
+            let keep_alive: TcpKeepalive = TcpKeepalive::new()
+              .with_time(servo_keep_alive_delay)
+              .with_interval(Duration::from_secs(1))
+              .with_retries(1);
 
-            if let Err(e) = s.write_all(&identity) {
+            socket.set_tcp_keepalive(&keep_alive).map_err(|e| return ServoError::TransportFailed(e))?;
+            let mut stream: std::net::TcpStream = socket.into();
+            stream.set_nodelay(true).map_err(|e| ServoError::TransportFailed(e))?;
+            stream.set_nonblocking(true).map_err(|e| ServoError::TransportFailed(e))?;
+
+            if let Err(e) = stream.write_all(&identity) {
               return Err(ServoError::TransportFailed(e));
             } else {
-              return Ok((s, *addr));
+              return Ok((stream, *addr));
             }
           },
           Err(e) => fatal_error = e,
@@ -64,13 +76,25 @@ pub(crate) fn establish(servo_addresses: &[impl ToSocketAddrs], prev_connected_s
     
           match TcpStream::connect_timeout(addr, timeout) {
             Ok(mut s) => {
-              s.set_nodelay(true).map_err(|e| ServoError::TransportFailed(e))?;
-              s.set_nonblocking(true).map_err(|e| ServoError::TransportFailed(e))?;
+              //s.set_nodelay(true).map_err(|e| ServoError::TransportFailed(e))?;
+              //s.set_nonblocking(true).map_err(|e| ServoError::TransportFailed(e))?;
 
-              if let Err(e) = s.write_all(&identity) {
+              let socket = Socket::from(s);
+              socket.set_keepalive(true).map_err(|e| return ServoError::TransportFailed(e))?;
+              let keep_alive: TcpKeepalive = TcpKeepalive::new()
+                .with_time(servo_keep_alive_delay)
+                .with_interval(Duration::from_secs(1))
+                .with_retries(1);
+
+              socket.set_tcp_keepalive(&keep_alive).map_err(|e| return ServoError::TransportFailed(e))?;
+              let mut stream: std::net::TcpStream = socket.into();
+              stream.set_nodelay(true).map_err(|e| ServoError::TransportFailed(e))?;
+              stream.set_nonblocking(true).map_err(|e| ServoError::TransportFailed(e))?;
+
+              if let Err(e) = stream.write_all(&identity) {
                 return Err(ServoError::TransportFailed(e));
               } else {
-                return Ok((s, *addr));
+                return Ok((stream, *addr));
               }
             },
             Err(e) => fatal_error = e,

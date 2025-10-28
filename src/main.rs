@@ -5,10 +5,13 @@ mod sequence;
 
 // TODO: Make it so you enter servo's socket address.
 // TODO: Clean up domain socket on exit.
-use std::{collections::HashMap, env, net::{SocketAddr, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::Command, thread, time::{Duration, Instant}};
-use common::{comm::{FlightControlMessage, Sequence}, sequence::{MMAP_PATH, SOCKET_PATH}};
-use crate::{device::Devices, servo::ServoError, sequence::Sequences, state::Ingestible, device::Mappings};
+use std::{collections::HashMap, default, env, net::{SocketAddr, TcpStream, UdpSocket}, os::unix::net::UnixDatagram, process::Command, thread, time::{Duration, Instant}};
+use common::{comm::{AbortStage, FlightControlMessage, Sequence}, sequence::{MMAP_PATH, SOCKET_PATH}};
+use crate::{device::Devices, servo::ServoError, sequence::Sequences, state::Ingestible, device::Mappings, device::AbortStages};
 use mmap_sync::synchronizer::Synchronizer;
+use wyhash::WyHash;
+use mmap_sync::locks::LockDisabled;
+use servo::servo_keep_alive_delay;
 
 const SERVO_SOCKET_ADDRESSES: [(&str, u16); 4] = [
   ("192.168.1.10", 5025),
@@ -44,11 +47,12 @@ const FC_TO_SERVO_RATE: Duration = Duration::from_millis(10);
 const SEND_HEARTBEAT_RATE: Duration = Duration::from_millis(50);
 
 /// If we do not hear from servo for this amount of time, we abort
-const SERVO_TO_FC_TIME_TO_LIVE: Duration = Duration::from_secs(60 * 10); // times 10 for 10 minutes
+const SERVO_TO_FC_TIME_TO_LIVE: Duration = Duration::from_secs(1); // times 10 for 10 minutes
 
 
 fn main() -> ! {
   Command::new("rm").arg(SOCKET_PATH).output().unwrap();
+  // TODO: kill duplicate process on boot
 
   // Checks if all the python dependencies are in order.
   if let Err(missing) = check_python_dependencies(&["common"]) {
@@ -67,11 +71,13 @@ fn main() -> ! {
   let command_socket: UnixDatagram = UnixDatagram::bind(SOCKET_PATH).expect(&format!("Could not open sequence command socket on path '{SOCKET_PATH}'."));
   command_socket.set_nonblocking(true).expect("Cannot set sequence command socket to non-blocking.");
 
+  // TODO: HAVE THIS IN A STRUCT CALLED MAIN LOOP DATA
   let mut mappings: Mappings = Vec::new();
   let mut devices: Devices = Devices::new();
   let mut sequences: Sequences = HashMap::new();
-  let mut synchronizer: Synchronizer = Synchronizer::new(MMAP_PATH.as_ref());
+  let mut synchronizer: Synchronizer<WyHash, LockDisabled, 1024, 500_000> = Synchronizer::with_params(MMAP_PATH.as_ref());
   let mut abort_sequence: Option<Sequence> = None;
+  let mut abort_stages: AbortStages = Vec::new();
   
   println!("Flight Computer running on version {}\n", env!("CARGO_PKG_VERSION"));
   println!("!!!! ATTENTION !!! ATTENTION !!!!");
@@ -96,19 +102,19 @@ fn main() -> ! {
       },
     }
   };
-  
+
+  // TODO: put this information into a struct, maybe call it main_loop_info or something?  
   let mut last_sent_to_servo = Instant::now(); // for sending messages to servo
   let mut last_heartbeat_sent = Instant::now(); // for sending messages to boards
   let mut aborted = false;
-  let mut mapping_has_prvnt = false;
-  let mut sent_prvnt_sam_msg = false;
   loop {
     let servo_message = get_servo_data(&mut servo_stream, &mut servo_address, &mut last_received_from_servo, &mut aborted);
 
     // if we haven't heard from servo in over 10 minutes, abort.
     if (!aborted) && (Instant::now().duration_since(last_received_from_servo) > SERVO_TO_FC_TIME_TO_LIVE) {
+      println!("FC to Servo timer of {} has expired. Sending abort messages to boards.", SERVO_TO_FC_TIME_TO_LIVE.as_secs_f64());
       aborted = true;
-      devices.send_sam_safe_valves(&socket);
+      devices.send_sams_abort(&socket, &mappings, &mut abort_stages, &mut sequences, false); // on servo LOC, we immediately abort after 10 mins
     }
 
     // decoding servo message, if it was received
@@ -116,20 +122,26 @@ fn main() -> ! {
       println!("Recieved a FlightControlMessage: {command:#?}");
 
       match command {
-        FlightControlMessage::Abort => abort(&mappings, &mut sequences, &abort_sequence),
+        FlightControlMessage::Abort => {
+          // check which type of abort should happen, abort stage or abort seq
+          if devices.get_state().abort_stage.name != "DEFAULT" {
+            devices.send_sams_abort(&socket, &mappings, &mut abort_stages, &mut sequences, true); // abort message means we use stage timers
+          } else {
+            abort(&mappings, &mut sequences, &abort_sequence);
+          }
+        },
         FlightControlMessage::AhrsCommand(c) => devices.send_ahrs_command(&socket, c),
         FlightControlMessage::BmsCommand(c) => devices.send_bms_command(&socket, c),
         FlightControlMessage::Trigger(_) => todo!(),
         FlightControlMessage::Mappings(m) => {
           mappings = m;
-          mapping_has_prvnt = mappings.iter().any(|m| m.text_id == "PRVNT");
-          sent_prvnt_sam_msg = false;
-          // send clear message to sams. this is needed in case we move PRVNT to a different sam on the new mappings
-          // as the old mapped sam will still think it has prvnt. we also need to sent the prvnt msg to the newly mapped
-          // prvnt sam (if it exists)
-          // still need to figure out when to send messages when devices connect
-          devices.send_sam_clear_prvnt_channel(&socket, &mappings);
-          // need to send prvnt mapping to sam board again if mappings change while everything is up
+      
+          // send clear message to sams. this is needed as with new mappings we restart the
+          // abort stage sequence and are in the default stage again. 
+          devices.send_sam_clear_abort_stage(&socket);
+
+          // restart the abort stage sequence
+          start_abort_stage_process(&mut abort_stages, &mappings, &mut sequences, &mut devices);
         },
         FlightControlMessage::Sequence(s) if s.name == "abort" => abort_sequence = Some(s),
         FlightControlMessage::Sequence(ref s) => sequence::execute(&mappings, s, &mut sequences),
@@ -177,21 +189,48 @@ fn main() -> ! {
             device.get_board_id(),
             device.get_ip()
           );
+          continue;
         }
         last_heartbeat_sent = Instant::now();
       }
     }
 
+    
+    // Increment heartbeats until we reach the threshold [20], where we send a board the current abort stage's 
+    // abort valve states. If we are in a default stage, then those are none. 
+    if need_to_send_heartbeat {
+      for device in devices.iter_mut() {
+        if device.get_num_heartbeats() <= 20 {
+          device.increment_num_heartbeats();
+        } 
+      }
+    }
+
+    // TODO: this is not really optimal, figure out a better way to do this
+    for device in devices.iter() {
+      //println!("{}", device.get_num_heartbeats());
+      if device.get_num_heartbeats() == 20 {
+        devices.send_sams_abort_stage(&socket, &Some(device.get_board_id()));
+      }
+    }
+
     for device in devices.iter_mut() {
-      device.set_first_heartbeat_var(false);
+      if device.get_num_heartbeats() == 20 {
+      device.increment_num_heartbeats();
+      }
     }
 
     // sequences and triggers
     let sam_commands = sequence::pull_commands(&command_socket);
-    let should_abort = devices.send_sam_commands(&socket, &mappings, sam_commands);
+    let should_abort = devices.send_sam_commands(&socket, &mappings, sam_commands, &mut abort_stages, &mut sequences);
 
     if should_abort {
-      abort(&mappings, &mut sequences, &abort_sequence);
+      // check which type of abort should happen, abort stage or abort seq
+      if devices.get_state().abort_stage.name != "DEFAULT" {
+        devices.send_sams_abort(&socket, &mappings, &mut abort_stages, &mut sequences, true); // not servo LOC, abort with stage timers
+      } else {
+        abort(&mappings, &mut sequences, &abort_sequence);
+      }
     }
 
     // triggers
@@ -200,9 +239,11 @@ fn main() -> ! {
 
 fn abort(mappings: &Mappings, sequences: &mut Sequences, abort_sequence: &Option<Sequence>) {
   if let Some(ref sequence) = abort_sequence {
-    for (_, sequence) in &mut *sequences {
-      if let Err(e) = sequence.kill() {
-        println!("Couldn't kill a sequence in preperation for abort, continuing normally: {e}");
+    for (name, sequence) in &mut *sequences {
+      if name != "AbortStage" {
+        if let Err(e) = sequence.kill() {
+          println!("Couldn't kill a sequence in preperation for abort, continuing normally: {e}");
+        }
       }
     }
 
@@ -211,7 +252,6 @@ fn abort(mappings: &Mappings, sequences: &mut Sequences, abort_sequence: &Option
     println!("Received an abort command, but no abort sequence has been set. Continuing normally...");
   }
 }
-
 
 /// Pulls data from Servo, if available.
 /// # Error Handling
@@ -261,6 +301,45 @@ fn get_servo_data(servo_stream: &mut TcpStream, servo_address: &mut SocketAddr, 
       None
     }
   }
+}
+
+fn start_abort_stage_process(abort_stages: &mut AbortStages, mappings: &Mappings, sequences: &mut Sequences, devices: &mut Devices) {
+  // if any abort stage sequences exist, kill them
+  for (name, sequence) in &mut *sequences {
+    if name == "AbortStage" {
+        if let Err(e) = sequence.kill() {
+            println!("Couldn't kill AbortStage sequence in preperation for starting new AbortStage sequence: {e}");
+            return;
+        }
+    }
+  }
+  sequences.remove_entry("AbortStage");
+
+  let abort_stage_body = r#"
+import time
+while True:
+    if curr_abort_stage() != "FLIGHT" and aborted_in_this_stage() == False and eval(curr_abort_condition()) == True:
+        #print("ABORTING")
+        abort()
+    wait_for(10*ms)
+"#;
+  
+  // create abort stage and store in abort_stages 
+  let default_stage = AbortStage { 
+    name: "DEFAULT".to_string(),
+    abort_condition: "False".to_string(), // never abort in this situation? 
+    aborted: false,
+    valve_safe_states: HashMap::new(),
+  };
+  abort_stages.push(default_stage.clone());
+
+  devices.set_abort_stage(&default_stage);
+
+  let abort_stage_seq = Sequence{
+    name: "AbortStage".to_string(),
+    script: abort_stage_body.to_string(),
+  };
+  sequence::execute(mappings, &abort_stage_seq, sequences);
 }
 
 /// Checks if python3 and the passed python modules exist.
