@@ -11,6 +11,7 @@ use crate::{device::Devices, servo::ServoError, sequence::Sequences, state::Inge
 use mmap_sync::synchronizer::Synchronizer;
 use wyhash::WyHash;
 use mmap_sync::locks::LockDisabled;
+use servo::servo_keep_alive_delay;
 
 const SERVO_SOCKET_ADDRESSES: [(&str, u16); 4] = [
   ("192.168.1.10", 5025),
@@ -46,7 +47,7 @@ const FC_TO_SERVO_RATE: Duration = Duration::from_millis(10);
 const SEND_HEARTBEAT_RATE: Duration = Duration::from_millis(50);
 
 /// If we do not hear from servo for this amount of time, we abort
-const SERVO_TO_FC_TIME_TO_LIVE: Duration = Duration::from_secs(60 * 10); // times 10 for 10 minutes
+const SERVO_TO_FC_TIME_TO_LIVE: Duration = Duration::from_secs(1); // times 10 for 10 minutes
 
 
 fn main() -> ! {
